@@ -1,0 +1,110 @@
+{
+  "name": "quimbi-ai-assistant",
+  "version": "0.1.0",
+  "description": "AI-powered customer support assistant for Game of Thrones mobile strategy game",
+  "author": "Quimbi AI Team",
+  "private": true,
+  "scripts": {
+    "demo": "echo 'Starting Quimbi AI Demo...' && echo 'Opening http://localhost:3000 in 5 seconds...' && npm run dev",
+    "dev": "next dev",
+    "dev:turbo": "next dev --turbo",
+    "dev:clean": "rm -rf .next && next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "clean": "rm -rf .next && rm -rf node_modules/.cache",
+    "electron": "NODE_ENV=development electron electron/main.js",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron electron/main.js\"",
+    "electron:pack": "npm run build && electron-builder --dir",
+    "electron:dist": "npm run build && electron-builder",
+    "preinstall-ollama": "node scripts/install-ollama.js",
+    "postinstall": "npm run preinstall-ollama"
+  },
+  "dependencies": {
+    "ai": "4.3.19",
+    "clsx": "2.1.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "next": "15.4.6",
+    "ollama": "0.5.16",
+    "ollama-ai-provider": "1.2.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-markdown": "9.1.0",
+    "tailwind-merge": "3.3.1",
+    "tailwindcss-animate": "1.0.7",
+    "uuid": "11.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "3.3.1",
+    "@types/node": "22.17.0",
+    "@types/react": "19.1.9",
+    "@types/react-dom": "19.1.7",
+    "@types/uuid": "10.0.0",
+    "concurrently": "^9.2.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "eslint": "8.57.1",
+    "eslint-config-next": "15.4.6",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.9.2",
+    "wait-on": "^8.0.4"
+  },
+  "main": "electron/main.js",
+  "homepage": "./",
+  "build": {
+    "appId": "com.quimbi.support-assistant",
+    "productName": "Quimbi Support Assistant",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      ".next/static/**/*",
+      "public/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/",
+        "to": "scripts/",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "icon": "public/favicon.ico",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "win": {
+      "icon": "public/favicon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "icon": "public/favicon.ico",
+      "category": "Office",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
