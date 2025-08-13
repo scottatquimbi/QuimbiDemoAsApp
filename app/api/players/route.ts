@@ -80,21 +80,42 @@ export async function GET(request: NextRequest) {
     const playerId = searchParams.get('playerId');
 
     if (!playerId) {
+      console.log('❌ Players API: No playerId provided');
       return NextResponse.json({ error: 'Player ID is required' }, { status: 400 });
     }
 
-    console.log('🎮 Fetching player profile (demo mode):', playerId);
+    console.log('🎮 Players API: Fetching player profile for:', playerId);
+    console.log('🎮 Players API: Available mock players:', Object.keys(mockPlayers));
 
     const player = mockPlayers[playerId as keyof typeof mockPlayers];
 
     if (!player) {
+      console.log('❌ Players API: Player not found:', playerId);
+      console.log('❌ Players API: Available IDs:', Object.keys(mockPlayers));
       return NextResponse.json({ error: 'Player not found' }, { status: 404 });
     }
 
-    console.log('👑 Player profile found:', player.player_name);
+    console.log('👑 Players API: Player profile found:', {
+      name: player.player_name,
+      id: player.player_id,
+      accountStatus: player.account_status,
+      lockReason: player.lock_reason,
+      vipLevel: player.vip_level
+    });
+
+    // Enhanced debugging for LannisterGold specifically
+    if (playerId === 'lannister-gold') {
+      console.log('🔐 Players API: LannisterGold profile details:');
+      console.log('  - Account Status:', player.account_status);
+      console.log('  - Lock Reason:', player.lock_reason);
+      console.log('  - VIP Level:', player.vip_level);
+      console.log('  - Total Spend:', player.total_spend);
+      console.log('  - Support Tier:', player.support_tier);
+    }
+
     return NextResponse.json(player);
   } catch (error) {
-    console.error('Error in players API:', error);
+    console.error('❌ Players API Error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

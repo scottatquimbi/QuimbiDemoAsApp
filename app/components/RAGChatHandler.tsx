@@ -34,6 +34,7 @@ export default function RAGChatHandler({
   gameId = 'got',
   onCompensationData 
 }: RAGChatHandlerProps) {
+  console.log('🎯 RAGChatHandler: Component instantiated with playerContext:', playerContext.playerName);
   // State for UI
   const [waitingForResponse, setWaitingForResponse] = useState<boolean>(false);
   const [isResponseStreaming, setIsResponseStreaming] = useState<boolean>(false);
@@ -287,14 +288,93 @@ export default function RAGChatHandler({
         return;
       }
       
-      // No compensation needed - show response immediately
-      console.log('✅ No compensation required - showing AI response immediately');
+      // No compensation needed - check if we have partial structured data or need to show fallback
+      console.log('✅ No compensation required - checking response format');
+      
+      // Check if we have any structured data that failed the initial check
+      if (result.problemSummary || result.solution || result.compensationText) {
+        console.log('🔧 Found partial structured data, attempting to create three-part response');
+        
+        // Create three-part data from whatever we have
+        const threePartResponseData = {
+          problemSummary: result.problemSummary || 'I understand your concern and I\'m here to help.',
+          solution: result.solution || 'Let me work on resolving this issue for you.',
+          compensation: result.compensationText || '',
+          hasCompensation: !!result.compensationText && result.compensationText.length > 0
+        };
+        
+        // Create basic analysis data for popup
+        const analysisDataForPopup = {
+          playerName: playerContext.playerName || 'Player',
+          issueType: 'General Support',
+          description: `${playerContext.playerName || 'Player'} has submitted a support request.`,
+          severity: 'P5',
+          confidenceScore: 0.7
+        };
+        
+        // Store data and show issue summary popup
+        setThreePartData(threePartResponseData);
+        setIssueAnalysisData({ analysisData: analysisDataForPopup, compensationDetails: null });
+        
+        // Show issue summary popup first
+        setWorkflowStage('analysis_pending');
+        setShowIssueSummaryPopup(true);
+        
+        return;
+      }
+      
+      // Check if result.content looks like JSON (indicating parsing failure)
+      let displayContent = result.content;
+      if (typeof result.content === 'string' && result.content.trim().startsWith('{')) {
+        console.log('⚠️ Response appears to be unparsed JSON, creating fallback message');
+        try {
+          const jsonData = JSON.parse(result.content);
+          // If it's a JSON object with structured data, extract what we can
+          if (jsonData.problemSummary || jsonData.solution) {
+            console.log('🔧 Extracting structured data from JSON content');
+            
+            const threePartResponseData = {
+              problemSummary: jsonData.problemSummary || 'I understand your concern and I\'m here to help.',
+              solution: jsonData.solution || 'Let me work on resolving this issue for you.',
+              compensation: jsonData.compensationText || '',
+              hasCompensation: !!jsonData.compensationText && jsonData.compensationText.length > 0
+            };
+            
+            // Create basic analysis data for popup
+            const analysisDataForPopup = {
+              playerName: playerContext.playerName || 'Player',
+              issueType: 'General Support',
+              description: `${playerContext.playerName || 'Player'} has submitted a support request.`,
+              severity: 'P5',
+              confidenceScore: 0.7
+            };
+            
+            // Store data and show issue summary popup
+            setThreePartData(threePartResponseData);
+            setIssueAnalysisData({ analysisData: analysisDataForPopup, compensationDetails: null });
+            
+            // Show issue summary popup first
+            setWorkflowStage('analysis_pending');
+            setShowIssueSummaryPopup(true);
+            
+            return;
+          } else {
+            // JSON doesn't have structured data, use fallback message
+            displayContent = 'I understand your request. Let me help you with that. Please provide more details if needed.';
+          }
+        } catch (e) {
+          // Not valid JSON, use fallback message
+          displayContent = 'I understand your request. Let me help you with that. Please provide more details if needed.';
+        }
+      }
+      
+      console.log('📝 Showing traditional response message');
       
       // Create assistant message
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: result.content
+        content: displayContent
       };
       
       // Add assistant message
@@ -422,13 +502,19 @@ export default function RAGChatHandler({
     // Generate AI response based on escalated analysis
     const { issueDetected, issue, compensation } = analysisData;
     
-    if (issueDetected && issue && compensation) {
-      // Create structured response components
-      const problemSummary = generateProblemSummary(issue, playerContext);
-      const solution = generateSolution(issue);
-      const compensationText = compensation.tier !== 'NONE' ? 
+    // More flexible check - proceed if we have at least issue detection
+    if (issueDetected || issue || compensation) {
+      console.log('🔧 Creating escalated response with available data');
+      // Create structured response components with fallbacks
+      const problemSummary = issue ? generateProblemSummary(issue, playerContext) : 
+        `I can see that you're a Level ${playerContext.gameLevel || 1}${(playerContext.vipLevel || 0) > 0 ? ` VIP ${playerContext.vipLevel}` : ''} player who was escalated from our automated support system. I've reviewed your case and understand the issue you're facing.`;
+      
+      const solution = issue ? generateSolution(issue) : 
+        "I'll investigate this issue for you right away. Based on your escalation from automated support, this requires human review. Let me check your account and resolve this matter.";
+      
+      const compensationText = (compensation && compensation.tier !== 'NONE') ? 
         generateCompensationText(compensation) : '';
-      const hasCompensation = compensation.tier !== 'NONE' && !!compensationText;
+      const hasCompensation = !!(compensation && compensation.tier !== 'NONE' && compensationText);
       
       // Set three-part data
       const threePartResponseData = {
@@ -441,15 +527,18 @@ export default function RAGChatHandler({
       // Prepare issue analysis data for popup with proper third-person report format
       const generateThirdPersonDescription = (issue: any) => {
         const playerName = playerContext.playerName || 'Player';
-        return `${playerName} has reported: ${issue.description || 'An issue requiring investigation and resolution.'}`;
+        if (issue?.description) {
+          return `${playerName} has reported: ${issue.description}`;
+        }
+        return `${playerName} was escalated from automated support and requires human assistance.`;
       };
 
       const analysisDataForPopup = {
         playerName: playerContext.playerName || 'Unknown Player',
-        issueType: issue.issueType || 'General Support',
+        issueType: issue?.issueType || 'Escalated Support',
         description: generateThirdPersonDescription(issue),
-        severity: compensation.tier || 'P5',
-        confidenceScore: issue.confidenceScore || 0.8
+        severity: compensation?.tier || 'P5',
+        confidenceScore: issue?.confidenceScore || 0.8
       };
       
       const compensationDetails = hasCompensation ? {
@@ -470,7 +559,33 @@ export default function RAGChatHandler({
       
       console.log('✅ Escalated analysis processed - showing issue summary popup');
     } else {
-      console.log('⚠️ Escalated analysis data incomplete, falling back to regular chat flow');
+      console.log('⚠️ No escalated analysis data found, creating basic escalation response');
+      
+      // Create basic escalation response when no analysis data is available
+      const threePartResponseData = {
+        problemSummary: `I can see that you're a Level ${playerContext.gameLevel || 1}${(playerContext.vipLevel || 0) > 0 ? ` VIP ${playerContext.vipLevel}` : ''} player who was escalated from our automated support system. I'm here to provide personalized assistance.`,
+        solution: "I'll review your case personally and ensure we resolve any issues you're experiencing. Let me investigate this matter for you right away.",
+        compensation: '',
+        hasCompensation: false
+      };
+      
+      const analysisDataForPopup = {
+        playerName: playerContext.playerName || 'Unknown Player',
+        issueType: 'Escalated Support',
+        description: `${playerContext.playerName || 'Player'} was escalated from automated support and requires human assistance.`,
+        severity: 'P5',
+        confidenceScore: 0.7
+      };
+      
+      // Store data and show issue summary popup
+      setThreePartData(threePartResponseData);
+      setIssueAnalysisData({ analysisData: analysisDataForPopup, compensationDetails: null });
+      
+      // Show issue summary popup first
+      setWorkflowStage('analysis_pending');
+      setShowIssueSummaryPopup(true);
+      
+      console.log('🎯 Basic escalation response created - showing issue summary popup');
     }
   };
 
@@ -757,9 +872,26 @@ export default function RAGChatHandler({
   // Handle acknowledgment of issue summary
   const handleAcknowledgeIssue = () => {
     console.log('✅ Issue acknowledged - showing three-part response');
+    console.log('🔍 Current state before acknowledgment:', {
+      showThreePartResponse,
+      workflowStage,
+      hasThreePartData: !!threePartData,
+      threePartData: threePartData ? Object.keys(threePartData) : null
+    });
+    
     setShowIssueSummaryPopup(false);
     setWorkflowStage('acknowledged');
     setShowThreePartResponse(true);
+    
+    // Debug: Force a state check after setting
+    setTimeout(() => {
+      console.log('🔍 State after acknowledgment:', {
+        showThreePartResponse: true, // should be true now
+        workflowStage: 'acknowledged', // should be acknowledged now
+        hasThreePartData: !!threePartData,
+        threePartData: threePartData ? Object.keys(threePartData) : null
+      });
+    }, 100);
   };
   
   // Handle completion of all responses (detect when all sections have been sent)
@@ -829,7 +961,7 @@ export default function RAGChatHandler({
       {/* Three-part response area - 50% of height */}
       <div className="flex-none h-1/2 flex flex-col overflow-hidden">
         {/* Three-part response component - takes remaining space after input */}
-        {showThreePartResponse && threePartData && workflowStage === 'acknowledged' ? (
+        {(showThreePartResponse && threePartData && workflowStage === 'acknowledged') ? (
           <div className="flex-1 border-gray-200 bg-white overflow-y-auto">
             <ThreePartResponse
               problemSummary={threePartData.problemSummary}
@@ -854,6 +986,11 @@ export default function RAGChatHandler({
               <div className="text-2xl mb-2">📝</div>
               <div className="font-medium">Three-Part Response</div>
               <div className="text-sm">Responses will appear here after analysis</div>
+              <div className="text-xs mt-2 font-mono bg-white p-2 rounded border">
+                Debug: showThreePartResponse={String(showThreePartResponse)}, 
+                hasThreePartData={String(!!threePartData)}, 
+                workflowStage={workflowStage}
+              </div>
             </div>
           </div>
         )}

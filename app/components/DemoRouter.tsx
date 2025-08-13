@@ -42,13 +42,14 @@ export default function DemoRouter({
       setIsDemo(shouldShowDemo);
       setIsLoading(false);
       
-      console.log('Demo Router Decision:', {
+      console.log('🔥 Demo Router Decision:', {
         shouldShowDemo,
         envConfig,
         urlHasDemoParam,
         isOnDemoRoute,
         demoModeActive,
-        pathname
+        pathname,
+        finalChoice: shouldShowDemo ? 'DEMO COMPONENT' : 'PRODUCTION COMPONENT'
       });
     };
     

@@ -144,13 +144,33 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
             console.log('🔐 Account locked - will route to email verification flow');
           }
         } else if (result.analysis.routeDecision === 'human') {
-          // Route directly to human chat - IMMEDIATELY
-          const escalationReason = result.analysis.sentiment?.requiresHuman ? 
-            `User sentiment requires personalized attention (${result.analysis.sentiment.tone} tone detected)` :
-            'AI determined this issue requires human assistance';
-          console.log('🤖 Routing to human agent IMMEDIATELY:', escalationReason);
-          onEscalate(escalationReason, formData);
-          return;
+          // BUSINESS LOGIC: Always attempt automated resolution first, even if sentiment suggests human attention
+          // If automated resolution succeeds AND user is upset, pass the resolution to human agent for personal delivery
+          console.log('🤖 AI suggests human attention, but will attempt automated resolution first');
+          console.log('🤖 Reason:', result.analysis.sentiment?.requiresHuman ? 
+            `User sentiment: ${result.analysis.sentiment.tone}` : 'AI determined complexity');
+          
+          // Set suggested category if available and continue to automated resolution
+          if (!formData.problemCategory && result.analysis.suggestedCategories.length > 0) {
+            const suggestedCategory = result.analysis.suggestedCategories[0].id;
+            console.log('🤖 Setting suggested category for automated resolution:', suggestedCategory);
+            setFormData(prev => ({ ...prev, problemCategory: suggestedCategory }));
+            formData.problemCategory = suggestedCategory;
+          }
+          
+          // Store sentiment info for later use in escalation if needed
+          (formData as any).detectedSentiment = result.analysis.sentiment;
+          
+          // AUTO-PROCEED: When escalation is deemed necessary, automatically proceed to automated resolution
+          console.log('🤖 Auto-proceeding to automated resolution for escalation case');
+          setTimeout(() => {
+            console.log('✅ Auto-submit triggered for escalation case');
+            setIsProcessing(true);
+            
+            // Directly call onSubmit since we already have all the data we need
+            onSubmit(formData);
+          }, 500); // Small delay to ensure UI updates
+          return; // Exit early to prevent showing the button UI
         } else {
           // Show category suggestions for user to choose
           setShowCategorySuggestions(true);
@@ -355,47 +375,7 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
             </div>
           )}
 
-          {(formData.problemCategory || (aiAnalysis && aiAnalysis.routeDecision === 'automated')) && (
-            <div className="form-section">
-              <label className="form-label">Priority Level</label>
-              
-              {aiAnalysis && aiAnalysis.routeDecision === 'automated' ? (
-                // Show auto-selected priority as read-only for automated cases
-                <div className="auto-selected-urgency">
-                  {URGENCY_LEVELS.filter(level => level.id === formData.urgencyLevel).map((level) => (
-                    <div key={level.id} className="urgency-display selected">
-                      <div className="urgency-content">
-                        <div className="urgency-header">
-                          <span className="urgency-label">✅ {level.label} (Auto-selected)</span>
-                          <div className="urgency-indicator" style={{ backgroundColor: level.color }}></div>
-                        </div>
-                        <p className="urgency-description">{level.description}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                // Show manual selection for non-automated cases
-                <div className="urgency-options">
-                  {URGENCY_LEVELS.map((level) => (
-                    <div
-                      key={level.id}
-                      className={`urgency-option ${formData.urgencyLevel === level.id ? 'selected' : ''}`}
-                      onClick={() => setFormData(prev => ({ ...prev, urgencyLevel: level.id }))}
-                    >
-                      <div className="urgency-content">
-                        <div className="urgency-header">
-                          <span className="urgency-label">{level.label}</span>
-                          <div className="urgency-indicator" style={{ backgroundColor: level.color }}></div>
-                        </div>
-                        <p className="urgency-description">{level.description}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+{/* Priority is automatically set by AI - not shown on intake form, only on processing screen */}
 
           {canAutoResolve && (
             <div className="auto-resolution-notice">

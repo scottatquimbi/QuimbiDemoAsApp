@@ -186,8 +186,8 @@ export default function ThreePartResponse({
         </div>
       </div>
 
-      {/* Compensation Section */}
-      {hasCompensation && (
+      {/* Compensation Section - Only show if there's actual compensation to give */}
+      {hasCompensation && compensationDetails && compensationDetails.gold && compensationDetails.gold > 0 && (
         <div className="response-section compensation-section">
           <div className="section-header">
             <h4>💰 Compensation</h4>

@@ -36,8 +36,11 @@ export default function AutomatedSupportPage() {
       console.log('⚠️ No form data to store for escalation');
     }
     
-    // Extract problem description from form data
+    // Extract problem description and automated resolution from form data
     const problemDescription = formData?.problemDescription || 'No specific problem description provided';
+    const automatedResolution = (formData as any)?.automatedResolution;
+    const humanDeliveryRequired = (formData as any)?.humanDeliveryRequired;
+    const sentimentReason = (formData as any)?.sentimentReason;
     
     // Run immediate analysis on the problem for the agent
     let analysisResults = null;
@@ -51,7 +54,7 @@ export default function AutomatedSupportPage() {
           playerId: playerProfile.player_id,
           accountStatus: playerProfile.account_status,
           lockReason: playerProfile.lock_reason,
-          freeformContext: `VIP ${playerProfile.vip_level} player in Kingdom #${playerProfile.kingdom_id}. Member of ${playerProfile.alliance_name}. Total spend: $${playerProfile.total_spend}. ${playerProfile.session_days} days active. ${playerProfile.account_status === 'locked' ? `ACCOUNT STATUS: LOCKED (${playerProfile.lock_reason}). ` : ''}ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"`
+          freeformContext: `VIP ${playerProfile.vip_level} player in Kingdom #${playerProfile.kingdom_id}. Member of ${playerProfile.alliance_name}. Total spend: $${playerProfile.total_spend}. ${playerProfile.session_days} days active. ${playerProfile.account_status === 'locked' ? `ACCOUNT STATUS: LOCKED (${playerProfile.lock_reason}). ` : ''}ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"${humanDeliveryRequired ? `\n\n--- AUTOMATED RESOLUTION AVAILABLE ---\nIssue was automatically resolved but customer requires human touch due to ${sentimentReason}.\n\nResolution Category: ${automatedResolution?.resolution?.category}\nResolution Actions: ${automatedResolution?.resolution?.actions?.join('; ')}\nCompensation: ${automatedResolution?.resolution?.compensation?.description || 'None'}\nTimeline: ${automatedResolution?.resolution?.timeline}\nInstructions: ${automatedResolution?.resolution?.followUpInstructions}\n\nAgent should deliver this resolution personally with empathy.` : ''}`
         };
 
         // Call the analysis API
@@ -94,7 +97,7 @@ export default function AutomatedSupportPage() {
       preloadedMessages: [],
       playerMessages: [],
       agentMessages: [],
-      freeformContext: `VIP ${playerProfile.vip_level} player in Kingdom #${playerProfile.kingdom_id}. Member of ${playerProfile.alliance_name}. Total spend: $${playerProfile.total_spend}. ${playerProfile.session_days} days active. ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"${analysisResults && analysisResults.issueDetected ? `\n\n--- AUTOMATED ANALYSIS ---\nIssue Type: ${analysisResults.issue?.issueType || 'Unknown'}\nPlayer Impact: ${analysisResults.issue?.playerImpact || 'Unknown'}\nSentiment: ${analysisResults.sentiment?.tone || 'Unknown'} (urgency: ${analysisResults.sentiment?.urgency || 'Unknown'})\nRecommended Compensation: ${analysisResults.compensation?.tier || 'None'}\nAnalysis: ${analysisResults.issue?.description || 'No analysis available'}\nRequires Human Review: ${analysisResults.compensation?.requiresHumanReview ? 'Yes' : 'No'}` : ''}`
+      freeformContext: `VIP ${playerProfile.vip_level} player in Kingdom #${playerProfile.kingdom_id}. Member of ${playerProfile.alliance_name}. Total spend: $${playerProfile.total_spend}. ${playerProfile.session_days} days active. ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"${humanDeliveryRequired ? `\n\n--- AUTOMATED RESOLUTION AVAILABLE ---\nIssue was automatically resolved but customer requires human touch due to ${sentimentReason}.\n\nResolution Category: ${automatedResolution?.resolution?.category}\nResolution Actions: ${automatedResolution?.resolution?.actions?.join('; ')}\nCompensation: ${automatedResolution?.resolution?.compensation?.description || 'None'}\nTimeline: ${automatedResolution?.resolution?.timeline}\nInstructions: ${automatedResolution?.resolution?.followUpInstructions}\n\nAgent should deliver this resolution personally with empathy.` : ''}${analysisResults && analysisResults.issueDetected ? `\n\n--- AUTOMATED ANALYSIS ---\nIssue Type: ${analysisResults.issue?.issueType || 'Unknown'}\nPlayer Impact: ${analysisResults.issue?.playerImpact || 'Unknown'}\nSentiment: ${analysisResults.sentiment?.tone || 'Unknown'} (urgency: ${analysisResults.sentiment?.urgency || 'Unknown'})\nRecommended Compensation: ${analysisResults.compensation?.tier || 'None'}\nAnalysis: ${analysisResults.issue?.description || 'No analysis available'}\nRequires Human Review: ${analysisResults.compensation?.requiresHumanReview ? 'Yes' : 'No'}` : ''}`
     } : {
       // Fallback for cases without player profile
       playerLevel: 1,
@@ -109,7 +112,7 @@ export default function AutomatedSupportPage() {
       preloadedMessages: [],
       playerMessages: [],
       agentMessages: [],
-      freeformContext: `ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"${analysisResults && analysisResults.issueDetected ? `\n\n--- AUTOMATED ANALYSIS ---\nIssue Type: ${analysisResults.issue?.issueType || 'Unknown'}\nPlayer Impact: ${analysisResults.issue?.playerImpact || 'Unknown'}\nSentiment: ${analysisResults.sentiment?.tone || 'Unknown'} (urgency: ${analysisResults.sentiment?.urgency || 'Unknown'})\nRecommended Compensation: ${analysisResults.compensation?.tier || 'None'}\nAnalysis: ${analysisResults.issue?.description || 'No analysis available'}\nRequires Human Review: ${analysisResults.compensation?.requiresHumanReview ? 'Yes' : 'No'}` : ''}`
+      freeformContext: `ESCALATED FROM AUTOMATED SUPPORT: ${reason}. ORIGINAL PROBLEM: "${problemDescription}"${humanDeliveryRequired ? `\n\n--- AUTOMATED RESOLUTION AVAILABLE ---\nIssue was automatically resolved but customer requires human touch due to ${sentimentReason}.\n\nResolution Category: ${automatedResolution?.resolution?.category}\nResolution Actions: ${automatedResolution?.resolution?.actions?.join('; ')}\nCompensation: ${automatedResolution?.resolution?.compensation?.description || 'None'}\nTimeline: ${automatedResolution?.resolution?.timeline}\nInstructions: ${automatedResolution?.resolution?.followUpInstructions}\n\nAgent should deliver this resolution personally with empathy.` : ''}${analysisResults && analysisResults.issueDetected ? `\n\n--- AUTOMATED ANALYSIS ---\nIssue Type: ${analysisResults.issue?.issueType || 'Unknown'}\nPlayer Impact: ${analysisResults.issue?.playerImpact || 'Unknown'}\nSentiment: ${analysisResults.sentiment?.tone || 'Unknown'} (urgency: ${analysisResults.sentiment?.urgency || 'Unknown'})\nRecommended Compensation: ${analysisResults.compensation?.tier || 'None'}\nAnalysis: ${analysisResults.issue?.description || 'No analysis available'}\nRequires Human Review: ${analysisResults.compensation?.requiresHumanReview ? 'Yes' : 'No'}` : ''}`
     };
     
     console.log('🔄 Setting demo scenario data to prevent redirect');

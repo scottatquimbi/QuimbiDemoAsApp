@@ -15,7 +15,26 @@ export async function POST(request: NextRequest) {
     
     // Check for account lock issues first (for demo purposes, using mock data approach)
     if (playerId === 'lannister-gold') {
-      const isAccountAccessIssue = problemDescription.toLowerCase().includes('login') || 
+      // Get player profile to check account status
+      console.log('🔍 LannisterGold detected - checking account status from internal database...');
+      let playerAccountLocked = false;
+      
+      try {
+        const playerResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/players?playerId=lannister-gold`);
+        if (playerResponse.ok) {
+          const playerData = await playerResponse.json();
+          playerAccountLocked = playerData.account_status === 'locked';
+          console.log('🔍 LannisterGold account status check:', {
+            account_status: playerData.account_status,
+            locked: playerAccountLocked
+          });
+        }
+      } catch (error) {
+        console.log('🔍 Could not fetch player data, falling back to keyword detection');
+      }
+      
+      const isAccountAccessIssue = playerAccountLocked || // Account is actually locked in database
+                                   problemDescription.toLowerCase().includes('login') || 
                                    problemDescription.toLowerCase().includes('access') ||
                                    problemDescription.toLowerCase().includes('locked') ||
                                    problemDescription.toLowerCase().includes('cannot') ||

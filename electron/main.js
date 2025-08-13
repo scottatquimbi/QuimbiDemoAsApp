@@ -8,70 +8,94 @@ let nextServerProcess;
 let serverPort = 3000;
 
 function startNextServer() {
-  return new Promise((resolve, reject) => {
-    const serverScript = isDev ? 'dev' : 'start';
-    const serverPath = isDev ? process.cwd() : path.join(__dirname, '..');
-    
-    console.log(`Starting Next.js server in ${isDev ? 'development' : 'production'} mode...`);
-    
-    nextServerProcess = spawn('npm', ['run', serverScript], {
-      cwd: serverPath,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true
-    });
+  return new Promise(async (resolve, reject) => {
+    if (isDev) {
+      // Development mode - use npm as before
+      console.log('Starting Next.js server in development mode...');
+      nextServerProcess = spawn('npm', ['run', 'dev'], {
+        cwd: process.cwd(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: true
+      });
 
-    let serverStarted = false;
-    
-    nextServerProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log('[Next.js]', output);
+      let serverStarted = false;
       
-      // Check if server is ready
-      if (output.includes('Ready in') || output.includes('started server on')) {
-        if (!serverStarted) {
-          serverStarted = true;
-          resolve();
+      nextServerProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('[Next.js]', output);
+        
+        // Check if server is ready
+        if (output.includes('Ready in') || output.includes('started server on') || output.includes('Local:')) {
+          if (!serverStarted) {
+            serverStarted = true;
+            resolve();
+          }
         }
-      }
+        
+        // Extract port if different from default
+        const portMatch = output.match(/localhost:(\d+)/);
+        if (portMatch) {
+          serverPort = parseInt(portMatch[1]);
+        }
+      });
+
+      nextServerProcess.stderr.on('data', (data) => {
+        console.error('[Next.js Error]', data.toString());
+      });
+
+      nextServerProcess.on('close', (code) => {
+        console.log(`Next.js server process exited with code ${code}`);
+        if (!serverStarted) {
+          reject(new Error(`Next.js server failed to start (exit code: ${code})`));
+        }
+      });
+
+      nextServerProcess.on('error', (error) => {
+        console.error('Failed to start Next.js server:', error);
+        if (!serverStarted) {
+          reject(error);
+        }
+      });
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (!serverStarted) {
+          reject(new Error('Next.js server startup timeout'));
+        }
+      }, 30000);
       
-      // Extract port if different from default
-      const portMatch = output.match(/localhost:(\d+)/);
-      if (portMatch) {
-        serverPort = parseInt(portMatch[1]);
-      }
-    });
-
-    nextServerProcess.stderr.on('data', (data) => {
-      console.error('[Next.js Error]', data.toString());
-    });
-
-    nextServerProcess.on('close', (code) => {
-      console.log(`Next.js server process exited with code ${code}`);
-      if (!serverStarted) {
-        reject(new Error(`Next.js server failed to start (exit code: ${code})`));
-      }
-    });
-
-    nextServerProcess.on('error', (error) => {
-      console.error('Failed to start Next.js server:', error);
-      if (!serverStarted) {
+    } else {
+      // Production mode - use original standalone server with proper static files
+      try {
+        const startServer = require('./server');
+        const server = await startServer(serverPort);
+        
+        // Store reference for cleanup and update port if changed
+        nextServerProcess = server;
+        if (server.port) {
+          serverPort = server.port;
+        }
+        
+        console.log(`Production Next.js server started on port ${serverPort}`);
+        resolve();
+      } catch (error) {
+        console.error('Failed to start production server:', error);
         reject(error);
       }
-    });
-
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      if (!serverStarted) {
-        reject(new Error('Next.js server startup timeout'));
-      }
-    }, 30000);
+    }
   });
 }
 
 function stopNextServer() {
   if (nextServerProcess) {
     console.log('Stopping Next.js server...');
-    nextServerProcess.kill('SIGTERM');
+    if (typeof nextServerProcess.kill === 'function') {
+      // It's a child process
+      nextServerProcess.kill('SIGTERM');
+    } else if (typeof nextServerProcess.close === 'function') {
+      // It's an HTTP server
+      nextServerProcess.close();
+    }
     nextServerProcess = null;
   }
 }
@@ -105,6 +129,9 @@ function createWindow() {
     
     // Focus on window
     if (isDev) {
+      mainWindow.webContents.openDevTools();
+    } else {
+      // Force DevTools open for debugging
       mainWindow.webContents.openDevTools();
     }
   });

@@ -53,15 +53,53 @@ export class AutomatedResolutionEngine {
     playerProfile: PlayerProfile
   ): Promise<AutomatedResolution> {
     
-    console.log('🤖 Attempting automated resolution for:', formData.problemCategory);
+    console.log('🔧 AutomatedResolutionEngine: Starting resolution process');
+    console.log('🔧 AutomatedResolutionEngine: Problem category:', formData.problemCategory);
+    console.log('🔧 AutomatedResolutionEngine: Problem description:', formData.problemDescription);
+    console.log('🔧 AutomatedResolutionEngine: Player profile received:', {
+      player_id: playerProfile.player_id,
+      player_name: playerProfile.player_name,
+      vip_level: playerProfile.vip_level,
+      total_spend: playerProfile.total_spend
+    });
     
     const ticketId = this.generateTicketId();
+    console.log('🔧 AutomatedResolutionEngine: Generated ticket ID:', ticketId);
     
     try {
-      // Check for account lock issues first
-      if (formData.problemCategory === 'account_access' && this.isAccountLockIssue(formData.problemDescription)) {
+      // PRIORITY CHECK: LannisterGold account lock detection regardless of category
+      console.log('🔐 AutomatedResolutionEngine: Checking for LannisterGold account lock situation...');
+      console.log('🔐 AutomatedResolutionEngine: Player profile check:', {
+        player_id: playerProfile.player_id,
+        account_status: (playerProfile as any).account_status,
+        lock_reason: (playerProfile as any).lock_reason
+      });
+      
+      if (playerProfile.player_id === 'lannister-gold' && (playerProfile as any).account_status === 'locked') {
+        console.log('🔐 AutomatedResolutionEngine: ✅ LannisterGold account lock detected - OVERRIDING CATEGORY');
+        console.log('🔐 AutomatedResolutionEngine: Original category was:', formData.problemCategory);
+        console.log('🔐 AutomatedResolutionEngine: Applying account lock resolution regardless of problem description');
         return await this.handleAccountLockResolution(formData, playerProfile, ticketId);
       }
+      
+      // Enhanced debugging for account access issues
+      if (formData.problemCategory === 'account_access') {
+        console.log('🔐 AutomatedResolutionEngine: Account access issue detected');
+        console.log('🔐 AutomatedResolutionEngine: Checking if this is an account lock issue...');
+        console.log('🔐 AutomatedResolutionEngine: Problem description analysis:', {
+          description: formData.problemDescription,
+          isAccountLockIssue: this.isAccountLockIssue(formData.problemDescription)
+        });
+        
+        if (this.isAccountLockIssue(formData.problemDescription)) {
+          console.log('🔐 AutomatedResolutionEngine: Account lock issue confirmed - calling handleAccountLockResolution');
+          return await this.handleAccountLockResolution(formData, playerProfile, ticketId);
+        } else {
+          console.log('🔐 AutomatedResolutionEngine: Not an account lock issue - proceeding to standard account access resolution');
+        }
+      }
+      
+      console.log('🔧 AutomatedResolutionEngine: Proceeding to standard resolution logic for category:', formData.problemCategory);
       
       switch (formData.problemCategory) {
         case 'account_access':
@@ -412,28 +450,99 @@ export class AutomatedResolutionEngine {
   }
 
   /**
-   * Calculate VIP-appropriate compensation
+   * Calculate standardized compensation based on specific problem flags and account status
+   */
+  private static calculateStandardCompensation(
+    playerProfile: PlayerProfile, 
+    issueType: string, 
+    problemFlags: any = {}
+  ) {
+    console.log('💰 AutomatedResolutionEngine: Calculating standard compensation');
+    console.log('💰 AutomatedResolutionEngine: Issue type:', issueType);
+    console.log('💰 AutomatedResolutionEngine: Player flags:', {
+      account_status: (playerProfile as any).account_status,
+      recent_crashes: (playerProfile as any).recent_crashes,
+      crash_frequency: (playerProfile as any).crash_frequency,
+      support_tier: (playerProfile as any).support_tier,
+      vip_level: playerProfile.vip_level
+    });
+
+    // Define base compensation for specific problem types
+    const standardCompensation = {
+      // Account lock issues
+      account_locked: {
+        base: { gold: 500, energy: 25 },
+        description: 'Account security disruption compensation'
+      },
+      // Technical issues based on crash frequency
+      technical_crashes: {
+        base: { gold: 300, energy: 20 },
+        description: 'Technical instability compensation'
+      },
+      // Connection/network issues
+      connection_issues: {
+        base: { gold: 200, energy: 15 },
+        description: 'Connection disruption compensation'
+      },
+      // Missing rewards/purchases
+      missing_items: {
+        base: { gold: 400, energy: 30 },
+        description: 'Missing content restoration compensation'
+      },
+      // General inconvenience
+      general_inconvenience: {
+        base: { gold: 150, energy: 10 },
+        description: 'Service disruption compensation'
+      }
+    };
+
+    let compensationType = 'general_inconvenience';
+    let finalCompensation = null;
+
+    // Determine compensation type based on specific flags and issue type
+    if ((playerProfile as any).account_status === 'locked') {
+      compensationType = 'account_locked';
+      console.log('💰 AutomatedResolutionEngine: Account locked - applying account lock compensation');
+    } else if (issueType === 'technical' && (playerProfile as any).recent_crashes > 0) {
+      compensationType = 'technical_crashes';
+      console.log('💰 AutomatedResolutionEngine: Technical issues with crashes detected');
+    } else if (issueType === 'missing_rewards' || issueType === 'purchase_issues') {
+      compensationType = 'missing_items';
+      console.log('💰 AutomatedResolutionEngine: Missing items/rewards compensation');
+    } else if (issueType === 'technical' && 
+               ((playerProfile as any).connection_quality === 'poor' || 
+                problemFlags.connectionIssue)) {
+      compensationType = 'connection_issues';
+      console.log('💰 AutomatedResolutionEngine: Connection issues compensation');
+    }
+
+    const baseComp = standardCompensation[compensationType];
+    
+    // Apply VIP and spender multipliers
+    const vipMultiplier = Math.max(1, playerProfile.vip_level * 0.15); // Reduced multiplier for fairness
+    const spenderBonus = playerProfile.total_spend > 100 ? 1.3 : 1; // Reduced for balance
+    const supportTierBonus = (playerProfile as any).support_tier === 'vip' ? 1.2 : 1;
+
+    finalCompensation = {
+      gold: Math.floor(baseComp.base.gold * vipMultiplier * spenderBonus * supportTierBonus),
+      resources: { energy: Math.floor(baseComp.base.energy * vipMultiplier * supportTierBonus) },
+      description: `${baseComp.description} (VIP ${playerProfile.vip_level})`
+    };
+
+    console.log('💰 AutomatedResolutionEngine: Final compensation:', finalCompensation);
+    return finalCompensation;
+  }
+
+  /**
+   * Calculate VIP-appropriate compensation (legacy method for backward compatibility)
    */
   private static calculateVIPCompensation(
     playerProfile: PlayerProfile, 
     issueType: string, 
     severity: 'minor' | 'moderate' | 'severe'
   ) {
-    const baseCompensation = {
-      minor: { gold: 200, energy: 10 },
-      moderate: { gold: 500, energy: 25 },
-      severe: { gold: 1000, energy: 50 }
-    };
-    
-    const base = baseCompensation[severity];
-    const vipMultiplier = Math.max(1, playerProfile.vip_level * 0.2);
-    const spenderBonus = playerProfile.total_spend > 100 ? 1.5 : 1;
-    
-    return {
-      gold: Math.floor(base.gold * vipMultiplier * spenderBonus),
-      resources: { energy: Math.floor(base.energy * vipMultiplier) },
-      description: `${severity} issue compensation with VIP ${playerProfile.vip_level} multiplier`
-    };
+    // Use the new standardized system
+    return this.calculateStandardCompensation(playerProfile, issueType);
   }
 
   /**
@@ -477,14 +586,28 @@ export class AutomatedResolutionEngine {
     ticketId: string
   ): Promise<AutomatedResolution> {
     
-    console.log('🔐 Detected account lock issue, initiating email verification process');
+    console.log('🔐 AutomatedResolutionEngine: handleAccountLockResolution called');
+    console.log('🔐 AutomatedResolutionEngine: Player profile in lock handler:', {
+      player_id: playerProfile.player_id,
+      player_name: playerProfile.player_name,
+      vip_level: playerProfile.vip_level
+    });
     
     // For LannisterGold with account lock flag, require email verification
+    console.log('🔐 AutomatedResolutionEngine: Checking if player is LannisterGold...');
+    console.log('🔐 AutomatedResolutionEngine: Player ID comparison:', {
+      actual: playerProfile.player_id,
+      expected: 'lannister-gold',
+      matches: playerProfile.player_id === 'lannister-gold'
+    });
+    
     if (playerProfile.player_id === 'lannister-gold') {
-      console.log('📧 Account lock detected for LannisterGold - requiring email verification');
+      console.log('🔐 AutomatedResolutionEngine: ✅ LannisterGold confirmed - initiating email verification process');
+      console.log('📧 AutomatedResolutionEngine: Account lock detected for LannisterGold - requiring email verification');
       
       // Generate verification code
       const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      console.log('📧 AutomatedResolutionEngine: Generated verification code:', verificationCode);
       
       // Log the verification email (in production, this would send actual email)
       console.log(`
@@ -505,7 +628,7 @@ Best regards,
 Game Support Team
       `);
       
-      return {
+      const emailVerificationResult = {
         success: true,
         ticketId,
         resolution: {
@@ -517,18 +640,21 @@ Game Support Team
             'Account unlock process pending email confirmation',
             'Temporary access restrictions maintained for security'
           ],
-          compensation: {
-            gold: 0,
-            description: 'Account will be unlocked upon email verification completion'
-          },
+          compensation: null, // No compensation for security verification - account unlock is the resolution
           timeline: 'Verification email sent - check your inbox within 5 minutes',
           followUpInstructions: `Click the verification link in your email to unlock your account. Your verification code is: ${verificationCode}. If you don't receive the email within 10 minutes, contact support with this ticket number.`
         }
       };
+      
+      console.log('🔐 AutomatedResolutionEngine: Email verification workflow result:', emailVerificationResult);
+      return emailVerificationResult;
     }
     
     // For other account lock issues, use standard resolution
-    return {
+    console.log('🔐 AutomatedResolutionEngine: Not LannisterGold - using standard account lock resolution');
+    console.log('🔐 AutomatedResolutionEngine: Player was:', playerProfile.player_id);
+    
+    const standardLockResult = {
       success: true,
       ticketId,
       resolution: {
@@ -544,6 +670,9 @@ Game Support Team
         followUpInstructions: 'Try logging in now. If you still cannot access your account, contact support immediately with this ticket number.'
       }
     };
+    
+    console.log('🔐 AutomatedResolutionEngine: Standard lock resolution result:', standardLockResult);
+    return standardLockResult;
   }
 
   /**

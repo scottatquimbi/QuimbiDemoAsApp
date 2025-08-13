@@ -130,7 +130,7 @@ REQUIRED FORMAT (NO HEADERS, just content separated by ---):
 
 ---
 
-[Third part: Compensation text - ONLY if compensation is needed, otherwise completely omit this third section - ONE TIME ONLY]
+[Third part: Compensation text - ONLY include this section if you have been specifically told that compensation is approved. If no compensation is mentioned in the system instructions, DO NOT include this section at all.]
 
 PROBLEM_SUMMARY Requirements:
 - Reference specific details from the player's context (freeform context, game level, VIP status)
@@ -189,8 +189,8 @@ CRITICAL: This is an ACCOUNT ACCESS issue. You MUST:
       }
       
       const compensationInfo = !hasCompensation
-        ? `I've reviewed the player's claim but could not approve compensation because: ${analysisResult.compensation?.reasoning || 'the issue could not be verified'}. Do NOT include a COMPENSATION section in your response.`
-        : `I've detected an issue and have prepared a compensation package for the player (${analysisResult.issue?.description || 'reported issue'}). Include a COMPENSATION section mentioning: ${analysisResult.compensation?.suggestedCompensation?.gold ? analysisResult.compensation.suggestedCompensation.gold + ' gold' : ''} ${Object.keys(analysisResult.compensation?.suggestedCompensation?.resources || {}).length > 0 ? 'and resources' : ''}.`;
+        ? `CRITICAL: No compensation is warranted for this issue. Do NOT include a COMPENSATION section in your response. End your response after the SOLUTION section only.`
+        : `I've detected an issue and have prepared a compensation package for the player (${analysisResult.issue?.description || 'reported issue'}). Include a COMPENSATION section mentioning exactly: ${analysisResult.compensation?.suggestedCompensation?.gold ? analysisResult.compensation.suggestedCompensation.gold + ' gold' : ''} ${Object.keys(analysisResult.compensation?.suggestedCompensation?.resources || {}).length > 0 ? 'and additional resources' : ''} for this inconvenience.`;
       
       enhancedSystem = `${enhancedSystem}\n\n${compensationInfo}${issueSpecificGuidance}`;
       debugLog('Enhanced System Prompt with Compensation', enhancedSystem);

@@ -66,23 +66,48 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
 
   const loadPlayerProfile = async () => {
     console.log('🤖 AutomatedSupportFlow: Loading player profile...');
+    console.log('🤖 AutomatedSupportFlow: Making request to /api/players?playerId=lannister-gold');
+    
     try {
       const response = await fetch('/api/players?playerId=lannister-gold');
-      console.log('🤖 Player profile response status:', response.status);
+      console.log('🤖 AutomatedSupportFlow: Response status:', response.status);
+      console.log('🤖 AutomatedSupportFlow: Response ok:', response.ok);
       
       if (response.ok) {
         const profile = await response.json();
-        console.log('🤖 Player profile loaded:', profile);
+        console.log('🤖 AutomatedSupportFlow: Raw profile response:', profile);
+        console.log('🤖 AutomatedSupportFlow: Profile account_status:', profile.account_status);
+        console.log('🤖 AutomatedSupportFlow: Profile lock_reason:', profile.lock_reason);
+        console.log('🤖 AutomatedSupportFlow: Profile player_id:', profile.player_id);
+        
+        // Verify critical security flags
+        if (profile.player_id === 'lannister-gold') {
+          console.log('🔐 AutomatedSupportFlow: LannisterGold profile verification:');
+          console.log('  ✓ Player ID matches:', profile.player_id === 'lannister-gold');
+          console.log('  ✓ Account locked:', profile.account_status === 'locked');
+          console.log('  ✓ Security lock reason:', profile.lock_reason === 'automated_security');
+          console.log('  ✓ VIP Level:', profile.vip_level);
+          console.log('  ✓ Total Spend:', profile.total_spend);
+        }
+        
         setPlayerProfile(profile);
         setFlowState('intake_form');
-        console.log('🤖 Flow state changed to intake_form');
+        console.log('🤖 AutomatedSupportFlow: Flow state changed to intake_form');
       } else {
-        console.error('🤖 Failed to load player profile, status:', response.status);
-        setError('Failed to load player profile');
+        const errorText = await response.text();
+        console.error('🤖 AutomatedSupportFlow: Failed to load player profile');
+        console.error('  - Status:', response.status);
+        console.error('  - Status Text:', response.statusText);
+        console.error('  - Error Body:', errorText);
+        setError(`Failed to load player profile (${response.status}): ${errorText}`);
       }
     } catch (err) {
-      console.error('🤖 Error loading player profile:', err);
-      setError('Unable to connect to support system');
+      console.error('🤖 AutomatedSupportFlow: Error loading player profile:', err);
+      console.error('🤖 AutomatedSupportFlow: Error details:', {
+        message: err instanceof Error ? err.message : 'Unknown error',
+        stack: err instanceof Error ? err.stack : undefined
+      });
+      setError(`Unable to connect to support system: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -114,8 +139,39 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
         console.log('🦙 Model persistence initialization failed (non-critical):', persistenceError);
       }
       
+      // Enhanced debugging before automated resolution
+      console.log('🔧 AutomatedSupportFlow: About to call AutomatedResolutionEngine.resolveIssue');
+      console.log('🔧 AutomatedSupportFlow: Form data:', {
+        identityConfirmed: data.identityConfirmed,
+        problemCategory: data.problemCategory,
+        problemDescription: data.problemDescription,
+        urgencyLevel: data.urgencyLevel
+      });
+      console.log('🔧 AutomatedSupportFlow: Player profile passed to engine:', {
+        player_id: playerProfile.player_id,
+        player_name: playerProfile.player_name,
+        account_status: (playerProfile as any).account_status,
+        lock_reason: (playerProfile as any).lock_reason,
+        vip_level: playerProfile.vip_level,
+        total_spend: playerProfile.total_spend
+      });
+      
+      // Check if this should trigger the LannisterGold account lock workflow
+      if (playerProfile.player_id === 'lannister-gold' && data.problemCategory === 'account_access') {
+        console.log('🔐 AutomatedSupportFlow: LannisterGold account access issue detected!');
+        console.log('🔐 AutomatedSupportFlow: This should trigger email verification workflow');
+        console.log('🔐 AutomatedSupportFlow: Account status check:', (playerProfile as any).account_status === 'locked');
+      }
+
       // Attempt automated resolution
       const resolutionResult = await AutomatedResolutionEngine.resolveIssue(data, playerProfile);
+      
+      console.log('🔧 AutomatedSupportFlow: Resolution engine result:', {
+        success: resolutionResult.success,
+        category: resolutionResult.resolution.category,
+        hasCompensation: !!resolutionResult.resolution.compensation,
+        escalationReason: resolutionResult.escalationReason
+      });
       
       console.log('🤖 Resolution result:', resolutionResult);
       
@@ -123,10 +179,38 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
         // Create ticket for successful automated resolution
         await AutomatedResolutionEngine.createAutomatedTicket(data, playerProfile, resolutionResult);
         
-        setResolution(resolutionResult);
-        setFlowState('resolution_display');
+        // Check if user has upset sentiment - if so, pass resolution to human agent for personal delivery
+        const detectedSentiment = (data as any).detectedSentiment;
+        const requiresHumanDelivery = detectedSentiment?.requiresHuman || 
+                                      ['angry', 'frustrated', 'agitated'].includes(detectedSentiment?.tone);
         
-        console.log('✅ Automated resolution completed successfully');
+        if (requiresHumanDelivery) {
+          console.log('🤝 Automated resolution successful, but passing to human agent due to sentiment:', detectedSentiment?.tone);
+          console.log('🤝 Human agent will deliver resolution with personal touch');
+          
+          setResolution(resolutionResult);
+          setFlowState('escalated_to_agent');
+          
+          // Pass the successful resolution to human agent with sentiment context
+          const escalationReason = `Customer resolved automatically but requires human touch due to ${detectedSentiment?.tone} sentiment. Resolution ready for personal delivery.`;
+          
+          // Add the successful automated resolution to the form data so it gets passed to the human agent
+          const dataWithResolution = {
+            ...data,
+            automatedResolution: resolutionResult,
+            humanDeliveryRequired: true,
+            sentimentReason: `${detectedSentiment?.tone} sentiment detected (intensity: ${detectedSentiment?.intensity})`
+          };
+          
+          setTimeout(() => {
+            onEscalateToAgent(escalationReason, dataWithResolution, playerProfile);
+          }, 1500);
+        } else {
+          // Normal automated resolution display for calm customers
+          setResolution(resolutionResult);
+          setFlowState('resolution_display');
+          console.log('✅ Automated resolution completed successfully');
+        }
       } else {
         // Handle escalation - immediately show redirecting screen and trigger escalation
         console.log('🔄 Escalating to human agent:', resolutionResult.escalationReason);
@@ -281,6 +365,19 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
           </div>
           <h2>AI Processing Your Request</h2>
           <p>Analyzing your issue and applying automated resolution...</p>
+          
+          {formData && (
+            <div className="processing-details">
+              <div className="detail-item">
+                <span className="detail-label">Priority Level:</span>
+                <span className="detail-value">{formData.urgencyLevel.charAt(0).toUpperCase() + formData.urgencyLevel.slice(1)} Priority (AI Selected)</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Category:</span>
+                <span className="detail-value">{formData.problemCategory ? formData.problemCategory.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'AI Analyzing...'}</span>
+              </div>
+            </div>
+          )}
           <div className="processing-steps">
             <div className="step completed">
               <span className="step-icon"></span>
@@ -359,8 +456,41 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
           }
           
           .processing-content p {
-            margin: 0 0 32px 0;
+            margin: 0 0 24px 0;
             color: #64748b;
+          }
+          
+          .processing-details {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0 32px 0;
+            text-align: left;
+          }
+          
+          .detail-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e2e8f0;
+          }
+          
+          .detail-item:last-child {
+            border-bottom: none;
+          }
+          
+          .detail-label {
+            font-weight: 600;
+            color: #374151;
+            font-size: 14px;
+          }
+          
+          .detail-value {
+            color: #8b5cf6;
+            font-weight: 500;
+            font-size: 14px;
           }
           
           .processing-steps {

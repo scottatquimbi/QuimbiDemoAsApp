@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true
   },
+  // Clean configuration for standalone builds
+  trailingSlash: false,
   // Fix Turbopack chunk loading issues (moved to stable config)
   turbopack: {
     rules: {
@@ -21,7 +23,7 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // Additional stability configurations
+  // Ensure static optimization works correctly
   experimental: {
     // Optimize package imports
     optimizePackageImports: ['ai', 'ollama'],
