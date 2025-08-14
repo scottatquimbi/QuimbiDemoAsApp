@@ -26,6 +26,7 @@
     "postinstall": "npm run preinstall-ollama"
   },
   "dependencies": {
+    "@emnapi/runtime": "^1.4.5",
     "ai": "4.3.19",
     "clsx": "2.1.1",
     "cors": "^2.8.5",
@@ -67,6 +68,9 @@
     },
     "files": [
       "electron/**/*"
+    ],
+    "asarUnpack": [
+      "!node_modules/@img/**/*"
     ],
     "extraResources": [
       {

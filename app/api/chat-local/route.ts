@@ -25,15 +25,22 @@ export async function POST(req: Request) {
   try {
     debugLog('Request received', 'Starting Ollama local chat processing...');
     
-    // Check if Ollama is available
-    const ollamaHealthy = await checkOllamaHealth();
+    // Check if Ollama is available (non-blocking)
+    let ollamaHealthy = false;
+    try {
+      ollamaHealthy = await checkOllamaHealth();
+    } catch (healthError) {
+      console.log('🦙 Health check failed (non-critical):', healthError);
+    }
+    
     if (!ollamaHealthy) {
       return new Response(
         JSON.stringify({ 
-          error: 'Ollama service is not available. Please ensure Ollama is running on http://127.0.0.1:11434' 
+          error: 'Ollama service is not available. Chat functionality is temporarily unavailable.',
+          success: false
         }), 
         { 
-          status: 503, 
+          status: 200, // Return 200 instead of 503 to prevent frontend errors
           headers: { 'Content-Type': 'application/json' } 
         }
       );

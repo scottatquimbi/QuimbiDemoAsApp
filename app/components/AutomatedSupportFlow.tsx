@@ -65,48 +65,19 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   }, []);
 
   const loadPlayerProfile = async () => {
-    console.log('🤖 AutomatedSupportFlow: Loading player profile...');
-    console.log('🤖 AutomatedSupportFlow: Making request to /api/players?playerId=lannister-gold');
-    
     try {
       const response = await fetch('/api/players?playerId=lannister-gold');
-      console.log('🤖 AutomatedSupportFlow: Response status:', response.status);
-      console.log('🤖 AutomatedSupportFlow: Response ok:', response.ok);
       
       if (response.ok) {
         const profile = await response.json();
-        console.log('🤖 AutomatedSupportFlow: Raw profile response:', profile);
-        console.log('🤖 AutomatedSupportFlow: Profile account_status:', profile.account_status);
-        console.log('🤖 AutomatedSupportFlow: Profile lock_reason:', profile.lock_reason);
-        console.log('🤖 AutomatedSupportFlow: Profile player_id:', profile.player_id);
-        
-        // Verify critical security flags
-        if (profile.player_id === 'lannister-gold') {
-          console.log('🔐 AutomatedSupportFlow: LannisterGold profile verification:');
-          console.log('  ✓ Player ID matches:', profile.player_id === 'lannister-gold');
-          console.log('  ✓ Account locked:', profile.account_status === 'locked');
-          console.log('  ✓ Security lock reason:', profile.lock_reason === 'automated_security');
-          console.log('  ✓ VIP Level:', profile.vip_level);
-          console.log('  ✓ Total Spend:', profile.total_spend);
-        }
-        
         setPlayerProfile(profile);
         setFlowState('intake_form');
-        console.log('🤖 AutomatedSupportFlow: Flow state changed to intake_form');
       } else {
-        const errorText = await response.text();
-        console.error('🤖 AutomatedSupportFlow: Failed to load player profile');
-        console.error('  - Status:', response.status);
-        console.error('  - Status Text:', response.statusText);
-        console.error('  - Error Body:', errorText);
-        setError(`Failed to load player profile (${response.status}): ${errorText}`);
+        console.error('Failed to load player profile:', response.status);
+        setError(`Failed to load player profile (${response.status})`);
       }
     } catch (err) {
-      console.error('🤖 AutomatedSupportFlow: Error loading player profile:', err);
-      console.error('🤖 AutomatedSupportFlow: Error details:', {
-        message: err instanceof Error ? err.message : 'Unknown error',
-        stack: err instanceof Error ? err.stack : undefined
-      });
+      console.error('Error loading player profile:', err);
       setError(`Unable to connect to support system: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
@@ -119,9 +90,7 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
     setError(null);
 
     try {
-      console.log('🤖 Starting automated resolution process...');
-      
-      // Initialize model persistence after first automated support use
+      // Initialize model persistence after first automated support use (non-blocking)
       try {
         const persistenceResponse = await fetch('/api/model-persistence', {
           method: 'POST',
@@ -131,49 +100,19 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
         
         if (persistenceResponse.ok) {
           const result = await persistenceResponse.json();
-          console.log('🦙 Model persistence initialized for future chat sessions:', result);
-        } else {
-          console.log('🦙 Model persistence initialization failed (non-critical)');
         }
       } catch (persistenceError) {
-        console.log('🦙 Model persistence initialization failed (non-critical):', persistenceError);
+        // Non-critical error - continue with automated resolution
       }
       
-      // Enhanced debugging before automated resolution
-      console.log('🔧 AutomatedSupportFlow: About to call AutomatedResolutionEngine.resolveIssue');
-      console.log('🔧 AutomatedSupportFlow: Form data:', {
-        identityConfirmed: data.identityConfirmed,
-        problemCategory: data.problemCategory,
-        problemDescription: data.problemDescription,
-        urgencyLevel: data.urgencyLevel
-      });
-      console.log('🔧 AutomatedSupportFlow: Player profile passed to engine:', {
-        player_id: playerProfile.player_id,
-        player_name: playerProfile.player_name,
-        account_status: (playerProfile as any).account_status,
-        lock_reason: (playerProfile as any).lock_reason,
-        vip_level: playerProfile.vip_level,
-        total_spend: playerProfile.total_spend
-      });
-      
-      // Check if this should trigger the LannisterGold account lock workflow
-      if (playerProfile.player_id === 'lannister-gold' && data.problemCategory === 'account_access') {
-        console.log('🔐 AutomatedSupportFlow: LannisterGold account access issue detected!');
-        console.log('🔐 AutomatedSupportFlow: This should trigger email verification workflow');
-        console.log('🔐 AutomatedSupportFlow: Account status check:', (playerProfile as any).account_status === 'locked');
-      }
 
-      // Attempt automated resolution
-      const resolutionResult = await AutomatedResolutionEngine.resolveIssue(data, playerProfile);
-      
-      console.log('🔧 AutomatedSupportFlow: Resolution engine result:', {
-        success: resolutionResult.success,
-        category: resolutionResult.resolution.category,
-        hasCompensation: !!resolutionResult.resolution.compensation,
-        escalationReason: resolutionResult.escalationReason
+      // Attempt automated resolution with timeout
+      const resolutionPromise = AutomatedResolutionEngine.resolveIssue(data, playerProfile);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Automated resolution timeout after 30 seconds')), 30000);
       });
       
-      console.log('🤖 Resolution result:', resolutionResult);
+      const resolutionResult = await Promise.race([resolutionPromise, timeoutPromise]);
       
       if (resolutionResult.success) {
         // Create ticket for successful automated resolution
@@ -185,9 +124,6 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
                                       ['angry', 'frustrated', 'agitated'].includes(detectedSentiment?.tone);
         
         if (requiresHumanDelivery) {
-          console.log('🤝 Automated resolution successful, but passing to human agent due to sentiment:', detectedSentiment?.tone);
-          console.log('🤝 Human agent will deliver resolution with personal touch');
-          
           setResolution(resolutionResult);
           setFlowState('escalated_to_agent');
           
@@ -209,17 +145,14 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
           // Normal automated resolution display for calm customers
           setResolution(resolutionResult);
           setFlowState('resolution_display');
-          console.log('✅ Automated resolution completed successfully');
         }
       } else {
         // Handle escalation - immediately show redirecting screen and trigger escalation
-        console.log('🔄 Escalating to human agent:', resolutionResult.escalationReason);
         setResolution(resolutionResult);
         setFlowState('escalated_to_agent');
         
         // Immediately trigger the escalation with the resolution reason
         const escalationReason = resolutionResult.escalationReason || 'Automated resolution could not resolve this issue';
-        console.log('🔄 Immediately triggering escalation:', escalationReason);
         
         // Short delay to show the redirecting screen, then escalate
         setTimeout(() => {
@@ -227,15 +160,12 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
         }, 1500);
       }
     } catch (err) {
-      console.error('🚨 Error during automated resolution:', err);
       setError('Technical error occurred during resolution. Escalating to human agent.');
       onEscalateToAgent('Technical error during automated resolution', data, playerProfile);
     }
   };
 
   const handleEscalation = (reason: string, escalatedFormData?: IntakeFormData) => {
-    console.log('🔄 Manual escalation requested:', reason, escalatedFormData ? 'with form data' : 'without form data');
-    
     // IMMEDIATELY show the escalation screen
     setFlowState('escalated_to_agent');
     setResolution({
@@ -260,15 +190,13 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   };
 
   const handleStartOver = () => {
-    console.log('🔄 Start Over button clicked - returning to intake form');
-    
     // Clean up any escalated analysis data when starting over (non-blocking)
     if (typeof window !== 'undefined') {
       setTimeout(() => {
         try {
           localStorage.removeItem('escalatedAnalysisData');
         } catch (error) {
-          console.log('Non-critical: Failed to clear localStorage:', error);
+          // Non-critical error
         }
       }, 0);
     }
@@ -281,16 +209,9 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   };
 
   const handleContactAgent = () => {
-    console.log('🔄 Contact Agent button clicked');
-    console.log('🔄 Current formData:', formData);
-    console.log('🔄 Current resolution:', resolution);
-    
     const reason = resolution ? 
       `Follow-up needed after automated resolution (Ticket: ${resolution.ticketId})` : 
       'Player requested human agent after automated process';
-    
-    console.log('🔄 Escalation reason:', reason);
-    console.log('🔄 Calling onEscalateToAgent...');
     
     onEscalateToAgent(reason, formData || undefined, playerProfile || undefined);
   };

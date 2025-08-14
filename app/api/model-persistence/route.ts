@@ -7,13 +7,21 @@ export async function POST(request: NextRequest) {
     
     if (action === 'initialize') {
       console.log('🦙 API: Initializing model persistence...');
-      await initializeModelPersistence();
-      
-      return NextResponse.json({
-        success: true,
-        message: 'Model persistence initialized',
-        active: isModelPersistenceActive()
-      });
+      try {
+        await initializeModelPersistence();
+        return NextResponse.json({
+          success: true,
+          message: 'Model persistence initialized',
+          active: isModelPersistenceActive()
+        });
+      } catch (initError) {
+        console.log('🦙 API: Model persistence initialization failed (non-critical):', initError);
+        return NextResponse.json({
+          success: false,
+          message: 'Model persistence initialization failed (non-critical)',
+          active: false
+        });
+      }
     }
     
     if (action === 'status') {
@@ -28,12 +36,13 @@ export async function POST(request: NextRequest) {
     }, { status: 400 });
     
   } catch (error) {
-    console.error('🦙 API: Model persistence error:', error);
+    console.log('🦙 API: Model persistence operation failed (non-critical):', error);
     
     return NextResponse.json({
-      error: 'Model persistence operation failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+      success: false,
+      message: 'Model persistence operation failed (non-critical)',
+      active: false
+    });
   }
 }
 
@@ -44,11 +53,12 @@ export async function GET() {
       active: isModelPersistenceActive()
     });
   } catch (error) {
-    console.error('🦙 API: Model persistence status check failed:', error);
+    console.log('🦙 API: Model persistence status check failed (non-critical):', error);
     
     return NextResponse.json({
-      error: 'Status check failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+      success: false,
+      message: 'Status check failed (non-critical)',
+      active: false
+    });
   }
 }

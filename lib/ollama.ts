@@ -1,4 +1,15 @@
-import ollama from 'ollama';
+let ollama: any;
+try {
+  ollama = require('ollama');
+} catch (error) {
+  console.error('🦙 Failed to import ollama package:', error);
+  // Create a mock ollama object to prevent crashes
+  ollama = {
+    generate: async () => { throw new Error('Ollama package not available'); },
+    list: async () => { throw new Error('Ollama package not available'); },
+    pull: async () => { throw new Error('Ollama package not available'); }
+  };
+}
 
 
 
@@ -99,7 +110,7 @@ export class OllamaClient {
   async isModelAvailable(modelName: string): Promise<boolean> {
     try {
       const models = await ollama.list();
-      return models.models.some(model => model.name === modelName);
+      return models.models.some((model: any) => model.name === modelName);
     } catch (error) {
       console.error('🦙 Ollama: Error checking model availability:', error);
       return false;
@@ -113,7 +124,7 @@ export class OllamaClient {
   async listModels(): Promise<string[]> {
     try {
       const models = await ollama.list();
-      return models.models.map(model => model.name);
+      return models.models.map((model: any) => model.name);
     } catch (error) {
       console.error('🦙 Ollama: Error listing models:', error);
       return [];

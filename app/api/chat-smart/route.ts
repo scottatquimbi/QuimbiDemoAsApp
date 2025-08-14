@@ -23,13 +23,19 @@ export async function POST(req: Request) {
     debugLog('Request received', 'Starting smart AI provider chat processing...');
     
     
-    // Get provider status
-    const providerStatus = await getProviderStatus();
-    debugLog('AI Provider Status', providerStatus);
+    // Get provider status (non-blocking)
+    let providerStatus;
+    try {
+      providerStatus = await getProviderStatus();
+      debugLog('AI Provider Status', providerStatus);
+    } catch (statusError) {
+      console.log('🧠 Provider status check failed (non-critical):', statusError);
+      providerStatus = { available: false, error: 'Status check failed' };
+    }
 
     const { messages, system: userProvidedSystem, gameId, playerContext, externalSources } = await req.json();
     
-    // Handle warmup requests - quick model loading for qwen2.5-coder
+    // Handle warmup requests - quick model loading for llama3.1
     if (messages && messages.length === 1 && messages[0].content === 'warmup') {
       debugLog('Warmup request', 'Performing smart chat model warmup...');
       try {
@@ -38,7 +44,7 @@ export async function POST(req: Request) {
           JSON.stringify({ 
             status: 'success', 
             message: 'Smart chat model warmed up successfully',
-            model: 'qwen2.5-coder:7b'
+            model: 'llama3.1:8b'
           }), 
           { 
             status: 200, 
@@ -46,14 +52,15 @@ export async function POST(req: Request) {
           }
         );
       } catch (error) {
+        debugLog('Warmup failed (non-critical)', error);
         return new Response(
           JSON.stringify({ 
-            status: 'error', 
-            message: 'Smart chat warmup failed',
+            status: 'warming_up', 
+            message: 'Model is still warming up - please try again in a moment',
             error: error instanceof Error ? error.message : 'Unknown error'
           }), 
           { 
-            status: 500, 
+            status: 200, // Return 200 instead of 500 to avoid frontend errors
             headers: { 'Content-Type': 'application/json' } 
           }
         );

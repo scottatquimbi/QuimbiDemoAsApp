@@ -47,8 +47,6 @@ interface AutomatedIntakeFormProps {
 }
 
 export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalate }: AutomatedIntakeFormProps) {
-  console.log('🎯 AutomatedIntakeForm rendered with player:', playerProfile?.player_name);
-  
   const [formData, setFormData] = useState<IntakeFormData>({
     identityConfirmed: false,
     problemCategory: '',
@@ -67,21 +65,6 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
   const selectedCategory = PROBLEM_CATEGORIES.find(cat => cat.id === formData.problemCategory);
   const canAutoResolve = selectedCategory?.autoResolvable || aiAnalysis?.autoResolvable || false;
   const isSubmitDisabled = !formData.problemDescription.trim() || isProcessing || isAnalyzing;
-
-  console.log('🎯 Current form state:', {
-    currentStep,
-    showIdentityVerification,
-    formData,
-    isProcessing
-  });
-
-  console.log('🎯 Submit button state:', {
-    hasCategory: !!formData.problemCategory,
-    hasDescription: !!formData.problemDescription.trim(),
-    isProcessing,
-    disabled: isSubmitDisabled,
-    canAutoResolve
-  });
 
   const handleIdentityConfirmation = (confirmed: boolean) => {
     setFormData(prev => ({ ...prev, identityConfirmed: confirmed }));
@@ -192,17 +175,10 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
   const handleCategorySelection = (categoryId: string) => {
     setFormData(prev => ({ ...prev, problemCategory: categoryId }));
     setShowCategorySuggestions(false);
-    console.log('🎯 User selected category:', categoryId);
   };
 
   const handleSubmit = async () => {
-    console.log('🚀 Submit button clicked!');
-    console.log('🚀 Current form data:', formData);
-    console.log('🚀 AI Analysis:', aiAnalysis);
-    console.log('🚀 Can auto resolve:', canAutoResolve);
-    
     if (!formData.problemDescription.trim()) {
-      console.log('❌ Submit blocked - missing problem description');
       return;
     }
 
@@ -212,32 +188,21 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
       return; // Analysis will handle the flow
     }
 
-    console.log('✅ Form validation passed, starting processing...');
     setIsProcessing(true);
     
     // Check if category is auto-resolvable IMMEDIATELY - don't wait for AI analysis
     const selectedCategoryData = PROBLEM_CATEGORIES.find(cat => cat.id === formData.problemCategory);
     const isAutoResolvable = selectedCategoryData?.autoResolvable ?? canAutoResolve;
     
-    console.log('🎯 Category auto-resolvable check:', {
-      category: formData.problemCategory,
-      autoResolvable: selectedCategoryData?.autoResolvable,
-      aiCanAutoResolve: canAutoResolve,
-      finalDecision: isAutoResolvable
-    });
-    
     // If NOT auto-resolvable, immediately escalate (no delay)
     if (!isAutoResolvable) {
       const categoryLabel = selectedCategoryData?.label || aiAnalysis?.suggestedCategories?.[0]?.id || 'unknown';
-      console.log('🔄 IMMEDIATE escalation for non-auto-resolvable category:', categoryLabel);
       onEscalate(`Complex issue requiring human review: ${categoryLabel}`, formData);
       return;
     }
     
     // Only add delay for auto-resolvable cases that need processing
     setTimeout(() => {
-      console.log('🤖 Processing complete, routing to automated resolution...');
-      console.log('🎯 Calling onSubmit with formData:', formData);
       onSubmit(formData);
       setIsProcessing(false);
     }, 1500);
@@ -302,12 +267,7 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
               placeholder="Describe your issue in detail. For example: 'I can't log into my account after changing devices' or 'I completed a battle but didn't receive my rewards'..."
               value={formData.problemDescription}
               onChange={(e) => {
-                console.log('📝 Description changed:', e.target.value);
-                setFormData(prev => {
-                  const updated = { ...prev, problemDescription: e.target.value };
-                  console.log('📝 Updated form data:', updated);
-                  return updated;
-                });
+                setFormData(prev => ({ ...prev, problemDescription: e.target.value }));
                 
                 // Clear any existing timeout to prevent analysis during typing
                 if ((window as any).descriptionTimeout) {
@@ -400,16 +360,7 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
           <div className="form-actions">
             <button 
               className={`submit-button ${canAutoResolve ? 'auto-resolve' : 'escalate'}`}
-              onClick={() => {
-                console.log('🔥 Submit button physically clicked!');
-                console.log('🔥 Button disabled state:', !formData.problemDescription.trim() || isProcessing || isAnalyzing);
-                console.log('🔥 Form validation state:', {
-                  hasDescription: !!formData.problemDescription.trim(),
-                  isProcessing: isProcessing,
-                  isAnalyzing: isAnalyzing
-                });
-                handleSubmit();
-              }}
+              onClick={handleSubmit}
               disabled={!formData.problemDescription.trim() || isProcessing || isAnalyzing}
             >
               {isProcessing ? (

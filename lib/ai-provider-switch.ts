@@ -57,13 +57,13 @@ export class AIProvider {
   private async checkOllamaHealthCached(): Promise<boolean> {
     const now = Date.now();
     
-    // Use cached result if recent
-    if (this.ollamaHealthy !== null && (now - this.lastHealthCheck) < this.healthCheckInterval) {
+    // Use cached result if recent (but allow more frequent checks during startup)
+    const cacheTimeout = this.ollamaHealthy === false ? 5000 : this.healthCheckInterval; // Shorter cache for failed checks
+    if (this.ollamaHealthy !== null && (now - this.lastHealthCheck) < cacheTimeout) {
       return this.ollamaHealthy;
     }
     
     try {
-      console.log('🔄 Checking Ollama health...');
       this.ollamaHealthy = await Promise.race([
         checkOllamaHealth(),
         new Promise<boolean>((_, reject) => 
@@ -71,11 +71,13 @@ export class AIProvider {
         )
       ]);
       this.lastHealthCheck = now;
-      console.log(`🔄 Ollama health check result: ${this.ollamaHealthy ? '✅ Healthy' : '❌ Unhealthy'}`);
+      if (this.ollamaHealthy) {
+        console.log('🔄 Ollama health check: ✅ Healthy');
+      }
     } catch (error) {
-      console.log('🔄 Ollama health check failed:', error);
       this.ollamaHealthy = false;
       this.lastHealthCheck = now;
+      // Don't log health check failures as errors during startup
     }
     
     return this.ollamaHealthy;
@@ -149,17 +151,17 @@ export class AIProvider {
    * Generate chat text using Ollama
    */
   async generateChatText(prompt: string, options: any = {}) {
-    const ollamaAvailable = await this.isOllamaAvailable();
-    
-    if (!ollamaAvailable) {
-      throw new Error('Ollama is not available. Please ensure Ollama is running.');
-    }
-    
     try {
+      const ollamaAvailable = await this.isOllamaAvailable();
+      
+      if (!ollamaAvailable) {
+        throw new Error('Ollama is not available - it may still be starting up. Please wait a moment and try again.');
+      }
+      
       console.log('🦙 Using Ollama for chat text generation');
       return await generateChatTextOllama(prompt, options);
     } catch (error) {
-      console.error('❌ Error with Ollama chat generation:', error);
+      console.log('🦙 Ollama chat generation failed (may be starting up):', error);
       throw error;
     }
   }

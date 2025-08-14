@@ -70,6 +70,9 @@ export default function AutomatedSupportPage() {
         if (analysisResponse.ok) {
           analysisResults = await analysisResponse.json();
           console.log('🔄 Problem analysis completed:', analysisResults);
+          console.log('🔄 DEBUG INFO FROM API:', analysisResults.__debug);
+          console.log('🔄 ISSUE DETECTED:', analysisResults.issueDetected);
+          console.log('🔄 FULL ANALYSIS RESULT:', JSON.stringify(analysisResults, null, 2));
           
           // Store the analysis results for the chat system to use immediately
           localStorage.setItem('escalatedAnalysisData', JSON.stringify(analysisResults));

@@ -1,10 +1,11 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
 let nextServerProcess;
+let ollamaProcess;
 let serverPort = 3000;
 
 function startNextServer() {
@@ -97,6 +98,121 @@ function stopNextServer() {
       nextServerProcess.close();
     }
     nextServerProcess = null;
+  }
+}
+
+// Check if Ollama is running
+function checkOllamaRunning() {
+  return new Promise((resolve) => {
+    exec('curl -s --max-time 10 http://localhost:11434/api/tags', { timeout: 15000 }, (error, stdout) => {
+      if (error) {
+        console.log('🦙 Ollama check failed:', error.message);
+        resolve(false);
+      } else {
+        try {
+          JSON.parse(stdout);
+          console.log('🦙 Ollama health check successful');
+          resolve(true);
+        } catch (e) {
+          console.log('🦙 Ollama response invalid JSON:', stdout);
+          resolve(false);
+        }
+      }
+    });
+  });
+}
+
+// Start Ollama service as subprocess
+function startOllamaService() {
+  return new Promise((resolve) => {
+    console.log('🦙 Starting Ollama service...');
+    
+    // Try different possible paths for ollama
+    const ollamaPaths = [
+      'ollama',
+      '/usr/local/bin/ollama',
+      '/opt/homebrew/bin/ollama',
+      process.env.HOME + '/.ollama/bin/ollama'
+    ];
+    
+    let ollamaPath = 'ollama';
+    
+    // In production, try to find ollama in common locations
+    if (!isDev) {
+      for (const path of ollamaPaths) {
+        try {
+          const { execSync } = require('child_process');
+          execSync(`which ${path}`, { stdio: 'ignore' });
+          ollamaPath = path;
+          console.log(`🦙 Found Ollama at: ${path}`);
+          break;
+        } catch (error) {
+          // Continue to next path
+        }
+      }
+    }
+    
+    try {
+      ollamaProcess = spawn(ollamaPath, ['serve'], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: process.env.PATH + ':/usr/local/bin:/opt/homebrew/bin' }
+      });
+      
+      // Log stderr for debugging
+      if (ollamaProcess.stderr) {
+        ollamaProcess.stderr.on('data', (data) => {
+          console.log('🦙 Ollama stderr:', data.toString());
+        });
+      }
+      
+      if (ollamaProcess.pid) {
+        console.log(`🦙 Ollama service started with PID: ${ollamaProcess.pid}`);
+        ollamaProcess.unref();
+        
+        // Wait for service to be ready with longer timeout
+        let attempts = 0;
+        const maxAttempts = 15; // Increased attempts
+        
+        const checkService = async () => {
+          attempts++;
+          const isRunning = await checkOllamaRunning();
+          
+          if (isRunning) {
+            console.log('🦙 Ollama service is ready');
+            resolve(true);
+          } else if (attempts < maxAttempts) {
+            console.log(`🦙 Waiting for Ollama service... (attempt ${attempts}/${maxAttempts})`);
+            setTimeout(checkService, 3000); // Increased interval
+          } else {
+            console.log('🦙 Ollama service startup timeout, but continuing...');
+            resolve(false);
+          }
+        };
+        
+        setTimeout(checkService, 5000); // Longer initial delay
+      } else {
+        console.log('🦙 Failed to start Ollama service, but continuing...');
+        resolve(false);
+      }
+    } catch (error) {
+      console.log('🦙 Error starting Ollama service:', error.message);
+      resolve(false);
+    }
+  });
+}
+
+// Stop Ollama service
+function stopOllamaService() {
+  if (ollamaProcess && ollamaProcess.pid) {
+    console.log('🦙 Stopping Ollama service...');
+    try {
+      process.kill(ollamaProcess.pid, 'SIGTERM');
+      ollamaProcess = null;
+      console.log('🦙 Ollama service stopped');
+    } catch (error) {
+      console.log('🦙 Error stopping Ollama service:', error.message);
+    }
   }
 }
 
@@ -276,12 +392,23 @@ function createMenu() {
 // App event handlers
 app.whenReady().then(async () => {
   try {
+    // Check if Ollama is already running, if not start it
+    console.log('🦙 Checking Ollama service status...');
+    const isOllamaRunning = await checkOllamaRunning();
+    
+    if (!isOllamaRunning) {
+      console.log('🦙 Ollama not running, starting service...');
+      await startOllamaService();
+    } else {
+      console.log('🦙 Ollama service already running');
+    }
+    
     await startNextServer();
     createWindow();
     createMenu();
   } catch (error) {
-    console.error('Failed to start Next.js server:', error);
-    dialog.showErrorBox('Startup Error', `Failed to start the application server: ${error.message}`);
+    console.error('Failed to start application:', error);
+    dialog.showErrorBox('Startup Error', `Failed to start the application: ${error.message}`);
     app.quit();
   }
 
@@ -301,6 +428,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   // Clean up any resources here
   stopNextServer();
+  stopOllamaService();
 });
 
 // IPC handlers

@@ -147,17 +147,37 @@ Return only the JSON, no other text.`;
       maxTokens: 512
     });
     
-    console.log('🦙 Ollama issue detection response:', responseText);
+    console.log('🦙 RAW OLLAMA RESPONSE:', responseText);
+    console.log('🦙 RESPONSE LENGTH:', responseText?.length || 0);
+    console.log('🦙 RESPONSE TYPE:', typeof responseText);
     
     // Extract JSON from the response using our helper
     const analysisResult = extractJsonFromOllamaResponse(responseText);
+    console.log('🦙 PARSED RESULT:', analysisResult);
     if (analysisResult) {
       return analysisResult as IssueDetectionResult;
     }
     
     // Fall back to basic detection if JSON parsing fails
     console.log('🦙 Falling back to basic keyword detection...');
-    return { detected: false, issueType: null, description: 'Ollama parsing failed', playerImpact: 'minimal', confidenceScore: 0.1 };
+    
+    // For obvious issue keywords, force detection
+    const messageLower = message.toLowerCase();
+    const issueKeywords = ['broken', 'help', 'problem', 'issue', 'bug', 'crash', 'error', 'cant', "can't", 'wont', "won't", 'missing', 'lost', 'locked', 'access', 'login'];
+    const hasIssueKeyword = issueKeywords.some(keyword => messageLower.includes(keyword));
+    
+    if (hasIssueKeyword) {
+      console.log('🦙 Keyword detection found issue, forcing detected=true');
+      return {
+        detected: true,
+        issueType: messageLower.includes('login') || messageLower.includes('access') || messageLower.includes('locked') ? 'account' : 'technical',
+        description: 'Issue detected via keyword fallback',
+        playerImpact: 'moderate',
+        confidenceScore: 0.8
+      };
+    }
+    
+    return { detected: false, issueType: null, description: 'No issue detected', playerImpact: null, confidenceScore: 0.1 };
   } catch (error) {
     console.error('🦙 Error analyzing player message with Ollama:', error);
     // Fall back to the original keyword-based method if Ollama fails
