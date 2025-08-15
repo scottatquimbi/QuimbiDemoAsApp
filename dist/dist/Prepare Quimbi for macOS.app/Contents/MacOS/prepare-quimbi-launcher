@@ -1,0 +1,108 @@
+#!/bin/bash
+
+# Launcher script for Quimbi Preparation Tool
+# This opens Terminal and runs the preparation tool with a nice interface
+
+# Get the directory where this app bundle is located
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_PATH="$APP_DIR/prepare-quimbi-macos"
+
+# Check if the preparation script exists
+if [ ! -f "$SCRIPT_PATH" ]; then
+    # Try to find it in the same directory as the app bundle
+    SCRIPT_PATH="$(dirname "$APP_DIR")/prepare-quimbi-macos"
+    
+    if [ ! -f "$SCRIPT_PATH" ]; then
+        osascript -e 'display alert "Quimbi Preparation Tool" message "Could not find the preparation script. Please ensure prepare-quimbi-macos is in the same folder as this app." as critical'
+        exit 1
+    fi
+fi
+
+# Create a temporary script that will run in Terminal
+TEMP_SCRIPT="/tmp/quimbi-prep-$$.sh"
+cat > "$TEMP_SCRIPT" << INNER_EOF
+#!/bin/bash
+
+# Quimbi Preparation Tool - Terminal Interface
+clear
+echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+echo "║                    🤖 Quimbi Preparation Tool for macOS                     ║"
+echo "║                                                                              ║"
+echo "║  This tool will prepare your Mac to run the Quimbi Support Assistant by:    ║"
+echo "║                                                                              ║"
+echo "║  ✅ Installing Ollama AI runtime (if needed)                                ║"
+echo "║  ✅ Downloading llama3.1:8b model (~4.7GB, if needed)                      ║"
+echo "║  ✅ Verifying everything works correctly                                    ║"
+echo "║                                                                              ║"
+echo "║  Requirements:                                                               ║"
+echo "║  • macOS 10.15 or later                                                     ║"
+echo "║  • 8GB+ free disk space                                                     ║"
+echo "║  • Internet connection                                                       ║"
+echo "║                                                                              ║"
+echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Ask user if they want to proceed
+read -p "🚀 Press Enter to begin preparation, or type 'cancel' to exit: " response
+
+if [[ "\$response" == "cancel" ]] || [[ "\$response" == "c" ]]; then
+    echo ""
+    echo "❌ Preparation cancelled by user."
+    echo ""
+    read -p "Press Enter to close this window..."
+    exit 0
+fi
+
+echo ""
+echo "🔄 Starting Quimbi preparation process..."
+echo ""
+
+# Run the actual preparation tool with verbose output for better user experience
+"$SCRIPT_PATH" --verbose
+
+# Capture the exit code
+PREP_EXIT_CODE=\$?
+
+echo ""
+if [ \$PREP_EXIT_CODE -eq 0 ]; then
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                          🎉 SUCCESS! Ready for Quimbi!                      ║"
+    echo "║                                                                              ║"
+    echo "║  Your Mac is now prepared to run the Quimbi Support Assistant!             ║"
+    echo "║                                                                              ║"
+    echo "║  Next steps:                                                                 ║"
+    echo "║  1. Close this window                                                        ║"
+    echo "║  2. Run 'Quimbi Support Assistant.app'                                      ║"
+    echo "║                                                                              ║"
+    echo "║  The AI will now work smoothly with llama3.1:8b model ready to go!         ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+else
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                          ❌ Preparation Failed                               ║"
+    echo "║                                                                              ║"
+    echo "║  Something went wrong during the preparation process.                        ║"
+    echo "║                                                                              ║"
+    echo "║  Possible solutions:                                                         ║"
+    echo "║  • Check your internet connection                                           ║"
+    echo "║  • Ensure you have enough disk space (8GB+)                                ║"
+    echo "║  • Try running this tool again                                              ║"
+    echo "║  • Contact support if the problem persists                                  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+fi
+
+echo ""
+read -p "Press Enter to close this window..."
+
+# Clean up the temporary script
+rm -f "$TEMP_SCRIPT"
+INNER_EOF
+
+chmod +x "$TEMP_SCRIPT"
+
+# Open Terminal and run the script
+osascript << APPLESCRIPT
+tell application "Terminal"
+    activate
+    do script "bash '$TEMP_SCRIPT'"
+end tell
+APPLESCRIPT

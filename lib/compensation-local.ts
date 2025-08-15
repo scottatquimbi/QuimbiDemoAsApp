@@ -113,7 +113,9 @@ export async function detectIssue(message: string): Promise<IssueDetectionResult
   try {
     console.log('🦙 Detecting issue with Ollama...');
     
-    // Use Qwen2.5 Coder for detailed analysis - it's excellent at structured tasks
+    // FIRST: Try AI analysis with Ollama
+    
+    // Use llama3.1 for detailed analysis
     const analysisPrompt = `You are an AI analyzing a player's support request in a mobile game (Game of Thrones).
 
 Player message: "${message}"
@@ -154,28 +156,37 @@ Return only the JSON, no other text.`;
     // Extract JSON from the response using our helper
     const analysisResult = extractJsonFromOllamaResponse(responseText);
     console.log('🦙 PARSED RESULT:', analysisResult);
-    if (analysisResult) {
+    if (analysisResult && analysisResult.detected) {
+      console.log('🦙 AI ANALYSIS SUCCESSFUL - using AI result');
       return analysisResult as IssueDetectionResult;
     }
     
-    // Fall back to basic detection if JSON parsing fails
-    console.log('🦙 Falling back to basic keyword detection...');
+    // FALLBACK: If AI analysis fails, try keyword detection
+    console.log('🦙 AI analysis failed or returned negative - trying keyword fallback...');
     
-    // For obvious issue keywords, force detection
     const messageLower = message.toLowerCase();
-    const issueKeywords = ['broken', 'help', 'problem', 'issue', 'bug', 'crash', 'error', 'cant', "can't", 'wont', "won't", 'missing', 'lost', 'locked', 'access', 'login'];
+    const issueKeywords = [
+      'broken', 'help', 'problem', 'issue', 'bug', 'crash', 'error', 
+      'cant', "can't", 'wont', "won't", 'missing', 'lost', 'locked', 
+      'access', 'login', 'fail', 'failed', 'not work', 'doesnt work', 
+      "doesn't work", 'get in', 'log in', 'stuck', 'freeze', 'frozen'
+    ];
     const hasIssueKeyword = issueKeywords.some(keyword => messageLower.includes(keyword));
     
     if (hasIssueKeyword) {
-      console.log('🦙 Keyword detection found issue, forcing detected=true');
+      console.log('🦙 KEYWORD FALLBACK TRIGGERED - AI failed but keywords found:', message);
+      console.log('🦙 Matching keywords:', issueKeywords.filter(keyword => messageLower.includes(keyword)));
       return {
         detected: true,
-        issueType: messageLower.includes('login') || messageLower.includes('access') || messageLower.includes('locked') ? 'account' : 'technical',
-        description: 'Issue detected via keyword fallback',
+        issueType: messageLower.includes('login') || messageLower.includes('access') || messageLower.includes('locked') || messageLower.includes('get in') ? 'account' : 'technical',
+        description: `Issue detected via keyword fallback: ${issueKeywords.filter(keyword => messageLower.includes(keyword)).join(', ')}`,
         playerImpact: 'moderate',
-        confidenceScore: 0.8
+        confidenceScore: 0.7 // Lower confidence for keyword fallback
       };
     }
+    
+    // Both AI and keywords failed
+    console.log('🦙 Both AI analysis and keyword detection failed - no issue detected');
     
     return { detected: false, issueType: null, description: 'No issue detected', playerImpact: null, confidenceScore: 0.1 };
   } catch (error) {
@@ -548,6 +559,9 @@ async function processAccountLockIssue(message: string, playerContext: PlayerCon
 
 export async function analyzePlayerMessage(message: string, playerContext: PlayerContext) {
   console.log('🦙 Starting Ollama-powered player message analysis...');
+  console.log('🦙 ANALYZE MESSAGE INPUT:', message);
+  console.log('🦙 ANALYZE MESSAGE LENGTH:', message.length);
+  console.log('🦙 ANALYZE MESSAGE TYPE:', typeof message);
   
   // Check for account lock issues first - this takes priority over AI analysis
   if ((playerContext as any).accountStatus === 'locked') {
@@ -582,7 +596,9 @@ export async function analyzePlayerMessage(message: string, playerContext: Playe
   }
   
   // Detect issues in the message using Ollama
+  console.log('🦙 CALLING detectIssue with message:', message);
   const issueDetection = await detectIssue(message);
+  console.log('🦙 detectIssue RESULT:', issueDetection);
   
   // If no issue detected, return minimal result
   if (!issueDetection.detected) {
@@ -673,7 +689,12 @@ export async function analyzePlayerMessage(message: string, playerContext: Playe
     console.log('🦙 Non-VIP player with contradicted claim, auto-rejecting...');
     return {
       issueDetected: true,
-      issue: issueDetection,
+      issue: {
+        issueType: issueDetection.issueType,
+        description: issueDetection.description,
+        playerImpact: issueDetection.playerImpact,
+        confidenceScore: issueDetection.confidenceScore
+      },
       sentiment: await analyzeSentiment(message),
       compensation: {
         tier: CompensationTier.P5, // No compensation tier
@@ -735,7 +756,12 @@ export async function analyzePlayerMessage(message: string, playerContext: Playe
   
   return {
     issueDetected: true,
-    issue: issueDetection,
+    issue: {
+      issueType: issueDetection.issueType,
+      description: issueDetection.description,
+      playerImpact: issueDetection.playerImpact,
+      confidenceScore: issueDetection.confidenceScore
+    },
     sentiment,
     compensation
   };

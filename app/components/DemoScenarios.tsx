@@ -79,7 +79,7 @@ export default function DemoScenarios() {
           console.log('✅ Ollama health check passed');
           
           // Warm up both critical models for optimal performance
-          console.log('🔥 Warming up models (qwen2.5-coder:7b and llama3.1:8b)...');
+          console.log('🔥 Warming up llama3.1:8b model for faster responses...');
           try {
             // Warm up both chat endpoints to load both models
             const chatPromises = [

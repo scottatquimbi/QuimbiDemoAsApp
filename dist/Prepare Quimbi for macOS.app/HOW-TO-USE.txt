@@ -1,0 +1,32 @@
+# How to Use Prepare Quimbi for macOS
+
+## Simple Method (No Terminal Required)
+1. Double-click "Prepare Quimbi for macOS.app"
+2. Terminal will open automatically with a friendly interface
+3. Press Enter when prompted to begin
+4. Wait for the process to complete
+5. You'll see "Ready for Quimbi!" when done
+
+## What It Does
+- Installs Ollama AI runtime (if not already installed)
+- Downloads the llama3.1:8b model (~4.7GB)
+- Verifies everything works correctly
+- Prepares your Mac to run Quimbi Support Assistant
+
+## Requirements
+- macOS 10.15 or later
+- 8GB+ free disk space
+- Internet connection
+
+## Troubleshooting
+If the app doesn't open:
+1. Right-click the app and select "Open"
+2. Click "Open" when macOS asks about opening an unsigned app
+3. If it still doesn't work, open Terminal manually and run:
+   ./prepare-quimbi-macos
+
+## Files in this folder
+- "Prepare Quimbi for macOS.app" - The clickable application
+- prepare-quimbi-macos - Universal command-line version
+- prepare-quimbi-macos-arm64 - Apple Silicon version
+- prepare-quimbi-macos-x64 - Intel Mac version
