@@ -122,7 +122,9 @@ export function getEnhancedSystemPrompt(
     sessionDays?: number;
     totalSpend?: number;
   } = {},
-  externalSources?: any
+  externalSources?: any,
+  escalatedAnalysis?: any,
+  automatedResolution?: any
 ): string {
   // Detect support type from question
   const supportType = detectSupportType(question);
@@ -200,6 +202,71 @@ export function getEnhancedSystemPrompt(
         enhancedPrompt += `\n- Details: ${externalSources.knownIssue.content}`;
       }
     }
+  }
+  
+  // Add escalated analysis data if provided
+  if (escalatedAnalysis || automatedResolution) {
+    enhancedPrompt += `\n\n### ESCALATED SUPPORT SESSION DATA:`;
+    
+    if (escalatedAnalysis) {
+      enhancedPrompt += `\n\n**AI Analysis Results:**`;
+      
+      if (escalatedAnalysis.issueDetected) {
+        enhancedPrompt += `\n- Issue Detected: YES`;
+        
+        if (escalatedAnalysis.issue) {
+          const issue = escalatedAnalysis.issue;
+          if (issue.issueType) enhancedPrompt += `\n- Issue Type: ${issue.issueType}`;
+          if (issue.description) enhancedPrompt += `\n- Issue Description: ${issue.description}`;
+          if (issue.confidenceScore) enhancedPrompt += `\n- AI Confidence: ${Math.round(issue.confidenceScore * 100)}%`;
+        }
+        
+        if (escalatedAnalysis.sentiment) {
+          const sentiment = escalatedAnalysis.sentiment;
+          enhancedPrompt += `\n- Player Sentiment: ${sentiment.tone || 'neutral'}`;
+          if (sentiment.urgency) enhancedPrompt += ` (urgency: ${sentiment.urgency})`;
+          if (sentiment.intensity) enhancedPrompt += ` (intensity: ${sentiment.intensity})`;
+        }
+        
+        if (escalatedAnalysis.compensation) {
+          const compensation = escalatedAnalysis.compensation;
+          enhancedPrompt += `\n- Compensation Recommended: ${compensation.tier || 'unknown tier'}`;
+          if (compensation.reasoning) enhancedPrompt += `\n  Reasoning: ${compensation.reasoning}`;
+        }
+      } else {
+        enhancedPrompt += `\n- Issue Detected: NO - AI analysis did not detect compensatable issues`;
+      }
+    }
+    
+    if (automatedResolution) {
+      enhancedPrompt += `\n\n**Automated Resolution Results:**`;
+      enhancedPrompt += `\n- Resolution Status: ${automatedResolution.success ? 'SUCCESSFUL' : 'FAILED/ESCALATED'}`;
+      
+      if (automatedResolution.resolution) {
+        const resolution = automatedResolution.resolution;
+        if (resolution.category) enhancedPrompt += `\n- Category: ${resolution.category}`;
+        if (resolution.actions && resolution.actions.length > 0) {
+          enhancedPrompt += `\n- Actions Taken:`;
+          resolution.actions.forEach((action: string) => {
+            enhancedPrompt += `\n  • ${action}`;
+          });
+        }
+        if (resolution.compensation) {
+          enhancedPrompt += `\n- Compensation Already Provided:`;
+          const comp = resolution.compensation;
+          if (comp.gold) enhancedPrompt += ` ${comp.gold} gold`;
+          if (comp.resources) enhancedPrompt += ` + resources`;
+          if (comp.description) enhancedPrompt += ` (${comp.description})`;
+        }
+        if (resolution.timeline) enhancedPrompt += `\n- Expected Timeline: ${resolution.timeline}`;
+      }
+      
+      if (automatedResolution.escalationReason) {
+        enhancedPrompt += `\n- Escalation Reason: ${automatedResolution.escalationReason}`;
+      }
+    }
+    
+    enhancedPrompt += `\n\n**IMPORTANT**: Use this escalated session data to provide contextually aware support. If automated resolution was successful, acknowledge the prior actions taken. If AI analysis detected issues, use those insights to provide targeted assistance.`;
   }
   
   // Add contextual instructions based on scenario

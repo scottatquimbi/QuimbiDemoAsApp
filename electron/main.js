@@ -8,9 +8,40 @@ let nextServerProcess;
 let ollamaProcess;
 let serverPort = 3000;
 
+// Check if dev server is already running
+function checkDevServerRunning() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    exec('curl -s --max-time 5 http://localhost:3000', { timeout: 6000 }, (error, stdout) => {
+      if (error) {
+        console.log('💻 Dev server check failed:', error.message);
+        resolve(false);
+      } else {
+        console.log('💻 Dev server already running');
+        resolve(true);
+      }
+    });
+  });
+}
+
 function startNextServer() {
   return new Promise(async (resolve, reject) => {
-    if (isDev) {
+    // Check if we're in development mode AND not packaged
+    // Also check if we're running through npm script (which should use dev server)
+    const isRealDev = (isDev && !app.isPackaged) || process.env.npm_lifecycle_event;
+    
+    if (isRealDev) {
+      // First check if dev server is already running
+      console.log('Checking if Next.js dev server is already running...');
+      const isServerRunning = await checkDevServerRunning();
+      
+      if (isServerRunning) {
+        console.log('Next.js dev server already running - connecting to existing server');
+        serverPort = 3000;
+        resolve();
+        return;
+      }
+      
       // Development mode - use npm as before
       console.log('Starting Next.js server in development mode...');
       nextServerProcess = spawn('npm', ['run', 'dev'], {
@@ -66,19 +97,44 @@ function startNextServer() {
       }, 30000);
       
     } else {
-      // Production mode - use original standalone server with proper static files
+      // Production mode - use standalone server from .next/standalone
       try {
-        const startServer = require('./server');
-        const server = await startServer(serverPort);
+        const fs = require('fs');
+        const standaloneDir = path.join(process.cwd(), '.next', 'standalone');
+        const standaloneServer = path.join(standaloneDir, 'server.js');
         
-        // Store reference for cleanup and update port if changed
-        nextServerProcess = server;
-        if (server.port) {
-          serverPort = server.port;
+        if (!fs.existsSync(standaloneServer)) {
+          throw new Error('Standalone build not found. Run "npm run build" first.');
         }
         
+        // Set environment variables for standalone server
+        process.env.NODE_ENV = 'production';
+        process.env.PORT = serverPort.toString();
+        process.env.HOSTNAME = '127.0.0.1';
+        
+        console.log('Starting Next.js standalone server...');
+        console.log('Standalone dir:', standaloneDir);
+        
+        // Change to standalone directory and start server
+        const originalCwd = process.cwd();
+        process.chdir(standaloneDir);
+        
+        // Start the standalone server
+        const server = require(standaloneServer);
+        
         console.log(`Production Next.js server started on port ${serverPort}`);
+        
+        // Store server reference for cleanup
+        nextServerProcess = { 
+          close: () => {
+            process.chdir(originalCwd);
+            console.log('Production server stopped');
+          },
+          port: serverPort 
+        };
+        
         resolve();
+        
       } catch (error) {
         console.error('Failed to start production server:', error);
         reject(error);
@@ -91,13 +147,15 @@ function stopNextServer() {
   if (nextServerProcess) {
     console.log('Stopping Next.js server...');
     if (typeof nextServerProcess.kill === 'function') {
-      // It's a child process
+      // It's a child process - only kill if we started it
       nextServerProcess.kill('SIGTERM');
     } else if (typeof nextServerProcess.close === 'function') {
       // It's an HTTP server
       nextServerProcess.close();
     }
     nextServerProcess = null;
+  } else {
+    console.log('Next.js server was externally managed - not stopping');
   }
 }
 

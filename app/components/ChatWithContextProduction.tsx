@@ -69,21 +69,33 @@ export default function ChatWithContextProduction({
     gameId
   });
 
-  // Update player context when props change
+  // Update player context when props change - but preserve escalated data
   useEffect(() => {
-    updatePlayerContext(prev => ({
-      ...prev,
-      gameLevel: initialGameLevel,
-      playerName: initialPlayerName,
-      preferredName: initialPreferredName,
-      sessionDays: initialSessionDays,
-      vipLevel: initialVipLevel,
-      totalSpend: initialTotalSpend,
-      likelinessToChurn: initialLikelinessToChurn,
-      isSpender: initialTotalSpend > 0,
-      freeformContext: initialFreeformContext,
-      gameId
-    }));
+    updatePlayerContext(prev => {
+      // If we have escalated data (non-default player context), preserve it
+      const hasEscalatedData = prev.playerName && prev.playerName !== '' && prev.gameLevel > 1;
+      
+      if (hasEscalatedData) {
+        console.log('👤 ChatWithContextProduction: Preserving escalated player context, not resetting to initial values');
+        return prev; // Keep existing escalated context
+      }
+      
+      // Only update with initial values if we don't have escalated data
+      console.log('👤 ChatWithContextProduction: Updating player context with initial values');
+      return {
+        ...prev,
+        gameLevel: initialGameLevel,
+        playerName: initialPlayerName,
+        preferredName: initialPreferredName,
+        sessionDays: initialSessionDays,
+        vipLevel: initialVipLevel,
+        totalSpend: initialTotalSpend,
+        likelinessToChurn: initialLikelinessToChurn,
+        isSpender: initialTotalSpend > 0,
+        freeformContext: initialFreeformContext,
+        gameId
+      };
+    });
   }, [initialGameLevel, initialPlayerName, initialPreferredName, initialSessionDays, 
       initialVipLevel, initialTotalSpend, initialLikelinessToChurn, initialFreeformContext, gameId]);
 
@@ -161,6 +173,12 @@ export default function ChatWithContextProduction({
           onCompensationData={(data) => {
             console.log('💰 Compensation data received in production:', data);
             // Handle compensation data if needed
+          }}
+          onPlayerContextUpdate={(updatedContext) => {
+            console.log('👤 ChatWithContextProduction: Updating player context from escalated analysis:', updatedContext);
+            console.log('👤 ChatWithContextProduction: Current playerContext before update:', playerContext);
+            updatePlayerContext(updatedContext);
+            console.log('👤 ChatWithContextProduction: updatePlayerContext called, should trigger re-render');
           }}
         />
       </div>

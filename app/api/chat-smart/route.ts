@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       providerStatus = { available: false, error: 'Status check failed' };
     }
 
-    const { messages, system: userProvidedSystem, gameId, playerContext, externalSources } = await req.json();
+    const { messages, system: userProvidedSystem, gameId, playerContext, externalSources, escalatedAnalysis, automatedResolution } = await req.json();
     
     // Handle warmup requests - quick model loading for llama3.1
     if (messages && messages.length === 1 && messages[0].content === 'warmup') {
@@ -95,6 +95,14 @@ export async function POST(req: Request) {
     // Get player level from context or default to level 1
     const gameLevel = playerContext?.gameLevel || 1;
     
+    // Log escalated data if provided
+    if (escalatedAnalysis) {
+      debugLog('Escalated Analysis Data', escalatedAnalysis);
+    }
+    if (automatedResolution) {
+      debugLog('Automated Resolution Data', automatedResolution);
+    }
+
     // Generate an enhanced system prompt based on the player's level and question
     let enhancedSystem = playerContext 
       ? getEnhancedSystemPrompt(lastUserMessage, gameLevel, {
@@ -105,7 +113,7 @@ export async function POST(req: Request) {
           likelinessToChurn: playerContext.likelinessToChurn,
           sessionDays: playerContext.sessionDays,
           totalSpend: playerContext.totalSpend
-        }, externalSources)
+        }, externalSources, escalatedAnalysis, automatedResolution)
       : userProvidedSystem;
     
     // Analyze the player's message for potential issues requiring compensation using Ollama
@@ -123,21 +131,32 @@ CRITICAL FORMAT REQUIREMENT: You MUST structure your response in exactly 3 parts
 
 ABSOLUTELY FORBIDDEN:
 - Do NOT use section headers like "PROBLEM_SUMMARY:", "SOLUTION:", or "COMPENSATION:"
+- Do NOT use markdown headers like "### Regaining Access:", "### Compensation:", "### Additional Support:"
+- Do NOT use any headers, labels, or section dividers of any kind
 - Do NOT repeat any content between sections
 - Do NOT include any labels, headers, or section names
 - Do NOT duplicate any sentences or phrases
+- Do NOT start your response with triple dashes
+- Do NOT create more than 3 sections - EXACTLY 3 sections only
+- Do NOT add extra sections like "Additional Support" or "Further Assistance"
 
-REQUIRED FORMAT (NO HEADERS, just content separated by ---):
+REQUIRED FORMAT EXAMPLE (NO HEADERS, just content separated by ---):
 
-[First part: Problem acknowledgment with specific context - ONE TIME ONLY]
+I can see you're a Level 27 VIP 12 player experiencing an account access issue due to automated security measures. Your account shows a security lock that needs to be resolved before you can continue playing.
 
 ---
 
-[Second part: Step-by-step solution - ONE TIME ONLY]
+Please follow these steps to regain access: 1) Check your email for a verification message from our security team, 2) Click the verification link provided, 3) Reset your password using the forgot password option, 4) Log back into the game with your new credentials.
 
 ---
 
-[Third part: Compensation text - ONLY include this section if you have been specifically told that compensation is approved. If no compensation is mentioned in the system instructions, DO NOT include this section at all.]
+As a valued VIP 12 player, I've added 15000 gold to your account to compensate for this inconvenience.
+
+CRITICAL RULES:
+- Your response must START with the problem acknowledgment content immediately
+- NO headers, NO markdown formatting, NO section labels
+- EXACTLY 3 sections separated by triple dashes
+- The first triple dashes come AFTER the first section of content
 
 PROBLEM_SUMMARY Requirements:
 - Reference specific details from the player's context (freeform context, game level, VIP status)
@@ -146,36 +165,14 @@ PROBLEM_SUMMARY Requirements:
 - If system logs are provided, reference what actually happened vs what they reported
 - NEVER use generic phrases like "I understand you're having a problem"
 
-EXAMPLES - Match the format and specificity:
+CRITICAL: Each section appears EXACTLY ONCE. NO repetition, NO duplication, NO section headers.
 
-FOR ACCOUNT ACCESS ISSUES:
-Based on your report, I can see that you're a Level 27 VIP 12 player with significant account value who is currently locked out after a device change. Your account shows a successful login attempt that triggered our security protocols.
-
----
-
-I'll immediately verify your identity and unlock your account. Please provide your registered email address so I can send a verification code. Once verified, I'll restore full access and ensure all your progress and purchases are intact.
-
----
-
-As a valued VIP 12 player, I've added 1000 gold to compensate for this inconvenience.
-
-FOR MISSING REWARDS:
-Based on your report and system logs, I can see that you're a Level 15 VIP 3 player who should have received battle rewards after completing the Northern Campaign yesterday. The system shows the battle was completed successfully but the reward distribution process encountered an error.
-
----
-
-I'll manually trigger the reward distribution for your completed Northern Campaign battle. Please restart your game and check your in-game mailbox within the next 5 minutes. If you don't see the rewards, please clear your cache by going to Settings > General > Clear Cache.
-
----
-
-I've added 500 gold to compensate for the delay in receiving your rewards.
-
-CRITICAL: Each section appears EXACTLY ONCE. NO repetition, NO duplication, NO section headers.`;
+IMPORTANT: Always use the ACTUAL player data provided in the context (Level 27, VIP 12) - never use example levels or VIP statuses from other scenarios.`;
 
     enhancedSystem = `${enhancedSystem}\n\n${structuredFormat}`;
 
     // Add compensation information to system prompt if an issue was detected
-    if (analysisResult.issueDetected) {
+    if (analysisResult.issueDetected && 'compensation' in analysisResult) {
       const hasCompensation = (analysisResult.compensation?.suggestedCompensation?.gold || 0) > 0 || 
                              Object.keys(analysisResult.compensation?.suggestedCompensation?.resources || {}).length > 0;
       

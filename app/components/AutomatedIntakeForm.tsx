@@ -61,6 +61,7 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false); // Prevent race condition
   
   const selectedCategory = PROBLEM_CATEGORIES.find(cat => cat.id === formData.problemCategory);
   const canAutoResolve = selectedCategory?.autoResolvable || aiAnalysis?.autoResolvable || false;
@@ -76,13 +77,54 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
     setCurrentStep(2);
   };
 
+  // Dependency-based escalation handler with proper sequential operations
+  const handleEscalationPath = async (formData: IntakeFormData, aiAnalysis: any) => {
+    try {
+      
+      // Step 4.1: Prevent race condition - check if already submitted
+      if (hasSubmitted) {
+        return;
+      }
+      
+      // Step 4.2: Set processing state (depends on race condition check)
+      setHasSubmitted(true);
+      setIsProcessing(true);
+      
+      // Step 4.3: Prepare escalation data (depends on processing state)
+      
+      // Step 4.4: Add escalation flags and data (depends on Step 4.3)
+      (formData as any).sequentialEscalation = true;
+      (formData as any).aiAnalysisResult = aiAnalysis;
+      (formData as any).escalationPlayerContext = {
+        player_name: playerProfile.player_name,
+        game_level: playerProfile.game_level,
+        vip_level: playerProfile.vip_level,
+        total_spend: playerProfile.total_spend,
+        kingdom_id: playerProfile.kingdom_id,
+        alliance_name: playerProfile.alliance_name,
+        is_spender: playerProfile.is_spender,
+        session_days: playerProfile.session_days
+      };
+      
+      // Step 4.5: Pass to AutomatedSupportFlow (depends on Step 4.4)
+      
+      // Pass to AutomatedSupportFlow which will handle the dependency-based processing
+      onSubmit(formData);
+      
+    } catch (error) {
+      setIsProcessing(false);
+      setHasSubmitted(false);
+      // Fall back to regular escalation
+      onEscalate('Escalation processing failed - routing to human agent', formData);
+    }
+  };
+
   const analyzeWithAI = async (description: string) => {
     if (description.trim().length < 10) {
       return;
     }
 
     setIsAnalyzing(true);
-    console.log('🤖 Starting AI analysis of problem description...');
 
     try {
       const response = await fetch('/api/analyze-problem', {
@@ -100,7 +142,6 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
       });
 
       const result = await response.json();
-      console.log('🤖 AI Analysis Result:', result);
 
       if (result.success) {
         setAiAnalysis(result.analysis);
@@ -117,26 +158,18 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
             urgencyLevel: suggestedUrgency
           }));
           
-          console.log('🤖 Auto-selecting category and urgency:', {
-            category: topCategory.id,
-            urgency: suggestedUrgency
-          });
           
           // Special handling for account lock with email verification
           if (result.analysis.accountLocked && result.analysis.requiresEmailVerification) {
-            console.log('🔐 Account locked - will route to email verification flow');
+            // Route to email verification flow
           }
         } else if (result.analysis.routeDecision === 'human') {
           // BUSINESS LOGIC: Always attempt automated resolution first, even if sentiment suggests human attention
           // If automated resolution succeeds AND user is upset, pass the resolution to human agent for personal delivery
-          console.log('🤖 AI suggests human attention, but will attempt automated resolution first');
-          console.log('🤖 Reason:', result.analysis.sentiment?.requiresHuman ? 
-            `User sentiment: ${result.analysis.sentiment.tone}` : 'AI determined complexity');
           
           // Set suggested category if available and continue to automated resolution
           if (!formData.problemCategory && result.analysis.suggestedCategories.length > 0) {
             const suggestedCategory = result.analysis.suggestedCategories[0].id;
-            console.log('🤖 Setting suggested category for automated resolution:', suggestedCategory);
             setFormData(prev => ({ ...prev, problemCategory: suggestedCategory }));
             formData.problemCategory = suggestedCategory;
           }
@@ -144,15 +177,10 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
           // Store sentiment info for later use in escalation if needed
           (formData as any).detectedSentiment = result.analysis.sentiment;
           
-          // AUTO-PROCEED: When escalation is deemed necessary, automatically proceed to automated resolution
-          console.log('🤖 Auto-proceeding to automated resolution for escalation case');
-          setTimeout(() => {
-            console.log('✅ Auto-submit triggered for escalation case');
-            setIsProcessing(true);
-            
-            // Directly call onSubmit since we already have all the data we need
-            onSubmit(formData);
-          }, 500); // Small delay to ensure UI updates
+          // Sequential flow: Handle escalation path with proper processing order
+          
+          // Call the sequential escalation handler
+          handleEscalationPath(formData, result.analysis);
           return; // Exit early to prevent showing the button UI
         } else {
           // Show category suggestions for user to choose
@@ -201,11 +229,17 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
       return;
     }
     
-    // Only add delay for auto-resolvable cases that need processing
-    setTimeout(() => {
-      onSubmit(formData);
+    // Direct submission for auto-resolvable cases
+    
+    // Prevent race condition - check if already submitted
+    if (hasSubmitted) {
       setIsProcessing(false);
-    }, 1500);
+      return;
+    }
+    setHasSubmitted(true);
+    
+    onSubmit(formData);
+    setIsProcessing(false);
   };
 
   const urgencyLevel = URGENCY_LEVELS.find(level => level.id === formData.urgencyLevel);
@@ -245,9 +279,6 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
           <div className="verification-buttons">
             <button className="confirm-button" onClick={() => handleIdentityConfirmation(true)}>
               Confirm Identity
-            </button>
-            <button className="deny-button" onClick={() => handleIdentityConfirmation(false)}>
-              Not My Account
             </button>
           </div>
         </div>
@@ -486,7 +517,7 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
           margin-top: 24px;
         }
 
-        .confirm-button, .deny-button {
+        .confirm-button {
           flex: 1;
           padding: 14px 24px;
           border: none;
@@ -495,25 +526,12 @@ export default function AutomatedIntakeForm({ playerProfile, onSubmit, onEscalat
           font-size: 15px;
           cursor: pointer;
           transition: all 0.2s ease;
-        }
-
-        .confirm-button {
           background: #8b5cf6;
           color: white;
         }
 
         .confirm-button:hover {
           background: #7c3aed;
-          transform: translateY(-1px);
-        }
-
-        .deny-button {
-          background: #7c3aed;
-          color: white;
-        }
-
-        .deny-button:hover {
-          background: #b91c1c;
           transform: translateY(-1px);
         }
 

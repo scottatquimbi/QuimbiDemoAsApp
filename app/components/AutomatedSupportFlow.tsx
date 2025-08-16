@@ -59,7 +59,6 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   const [resolution, setResolution] = useState<AutomatedResolution | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Load player profile on component mount
   useEffect(() => {
     loadPlayerProfile();
   }, []);
@@ -67,17 +66,14 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   const loadPlayerProfile = async () => {
     try {
       const response = await fetch('/api/players?playerId=lannister-gold');
-      
       if (response.ok) {
         const profile = await response.json();
         setPlayerProfile(profile);
         setFlowState('intake_form');
       } else {
-        console.error('Failed to load player profile:', response.status);
         setError(`Failed to load player profile (${response.status})`);
       }
     } catch (err) {
-      console.error('Error loading player profile:', err);
       setError(`Unable to connect to support system: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
@@ -90,83 +86,83 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
     setError(null);
 
     try {
-      // Initialize model persistence after first automated support use (non-blocking)
-      try {
-        const persistenceResponse = await fetch('/api/model-persistence', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'initialize' })
-        });
-        
-        if (persistenceResponse.ok) {
-          const result = await persistenceResponse.json();
-        }
-      } catch (persistenceError) {
-        // Non-critical error - continue with automated resolution
-      }
-      
+      fetch('/api/model-persistence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'initialize' })
+      }).catch(() => {});
 
-      // Attempt automated resolution with timeout
-      const resolutionPromise = AutomatedResolutionEngine.resolveIssue(data, playerProfile);
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Automated resolution timeout after 30 seconds')), 30000);
-      });
-      
-      const resolutionResult = await Promise.race([resolutionPromise, timeoutPromise]);
-      
-      if (resolutionResult.success) {
-        // Create ticket for successful automated resolution
-        await AutomatedResolutionEngine.createAutomatedTicket(data, playerProfile, resolutionResult);
+      if ((data as any).sequentialEscalation) {
+        await handleSequentialEscalation(data, playerProfile);
+      } else {
+        // Run AI analysis for regular flow as well
+        console.log('🧠 Running AI analysis for regular automated resolution...');
+        const analysisStartTime = Date.now();
         
-        // Check if user has upset sentiment - if so, pass resolution to human agent for personal delivery
-        const detectedSentiment = (data as any).detectedSentiment;
-        const requiresHumanDelivery = detectedSentiment?.requiresHuman || 
-                                      ['angry', 'frustrated', 'agitated'].includes(detectedSentiment?.tone);
+        let aiAnalysis = null;
+        try {
+          const analysisResponse = await fetch('/api/analyze-player-message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              message: data.problemDescription, 
+              playerContext: {
+                player_name: playerProfile.player_name,
+                game_level: playerProfile.game_level,
+                vip_level: playerProfile.vip_level,
+                total_spend: playerProfile.total_spend,
+                is_spender: playerProfile.is_spender
+              }
+            })
+          });
+          
+          if (analysisResponse.ok) {
+            aiAnalysis = await analysisResponse.json();
+            const analysisTime = Date.now() - analysisStartTime;
+            console.log(`🧠 AI Analysis completed in ${analysisTime}ms for regular flow`);
+            
+          } else {
+            console.warn('AI analysis failed, proceeding with fallback');
+          }
+        } catch (error) {
+          console.warn('AI analysis error, proceeding with fallback:', error);
+        }
         
-        if (requiresHumanDelivery) {
+        const resolutionResult = await AutomatedResolutionEngine.resolveIssue(data, playerProfile, aiAnalysis);
+        if (resolutionResult.success) {
+          await AutomatedResolutionEngine.createAutomatedTicket(data, playerProfile, resolutionResult);
+          const detectedSentiment = (data as any).detectedSentiment;
+          const requiresHumanDelivery = detectedSentiment?.requiresHuman || ['angry', 'frustrated', 'agitated'].includes(detectedSentiment?.tone);
+
+          if (requiresHumanDelivery) {
+            const escalationReason = `Customer resolved automatically but requires human touch due to ${detectedSentiment?.tone} sentiment. Resolution ready for personal delivery.`;
+            const dataWithResolution = {
+              ...data,
+              automatedResolution: resolutionResult,
+              humanDeliveryRequired: true,
+              sentimentReason: `${detectedSentiment?.tone} sentiment detected (intensity: ${detectedSentiment?.intensity})`
+            };
+            setResolution(resolutionResult);
+            setFlowState('escalated_to_agent');
+            await onEscalateToAgent(escalationReason, dataWithResolution, playerProfile);
+          } else {
+            setResolution(resolutionResult);
+            setFlowState('resolution_display');
+          }
+        } else {
+          const escalationReason = resolutionResult.escalationReason || 'Automated resolution could not resolve this issue';
           setResolution(resolutionResult);
           setFlowState('escalated_to_agent');
-          
-          // Pass the successful resolution to human agent with sentiment context
-          const escalationReason = `Customer resolved automatically but requires human touch due to ${detectedSentiment?.tone} sentiment. Resolution ready for personal delivery.`;
-          
-          // Add the successful automated resolution to the form data so it gets passed to the human agent
-          const dataWithResolution = {
-            ...data,
-            automatedResolution: resolutionResult,
-            humanDeliveryRequired: true,
-            sentimentReason: `${detectedSentiment?.tone} sentiment detected (intensity: ${detectedSentiment?.intensity})`
-          };
-          
-          setTimeout(() => {
-            onEscalateToAgent(escalationReason, dataWithResolution, playerProfile);
-          }, 1500);
-        } else {
-          // Normal automated resolution display for calm customers
-          setResolution(resolutionResult);
-          setFlowState('resolution_display');
+          await onEscalateToAgent(escalationReason, data, playerProfile);
         }
-      } else {
-        // Handle escalation - immediately show redirecting screen and trigger escalation
-        setResolution(resolutionResult);
-        setFlowState('escalated_to_agent');
-        
-        // Immediately trigger the escalation with the resolution reason
-        const escalationReason = resolutionResult.escalationReason || 'Automated resolution could not resolve this issue';
-        
-        // Short delay to show the redirecting screen, then escalate
-        setTimeout(() => {
-          onEscalateToAgent(escalationReason, data, playerProfile);
-        }, 1500);
       }
     } catch (err) {
       setError('Technical error occurred during resolution. Escalating to human agent.');
-      onEscalateToAgent('Technical error during automated resolution', data, playerProfile);
+      await onEscalateToAgent('Technical error during automated resolution', data, playerProfile);
     }
   };
 
-  const handleEscalation = (reason: string, escalatedFormData?: IntakeFormData) => {
-    // IMMEDIATELY show the escalation screen
+  const handleEscalation = async (reason: string, escalatedFormData?: IntakeFormData) => {
     setFlowState('escalated_to_agent');
     setResolution({
       success: false,
@@ -179,29 +175,14 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
       },
       escalationReason: reason
     });
-    
-    // Use the escalated form data if provided, otherwise fall back to stored form data
     const dataToPass = escalatedFormData || formData || undefined;
-    
-    // Short delay to show the redirecting screen, then escalate
-    setTimeout(() => {
-      onEscalateToAgent(reason, dataToPass, playerProfile || undefined);
-    }, 1500);
+    await onEscalateToAgent(reason, dataToPass, playerProfile || undefined);
   };
 
   const handleStartOver = () => {
-    // Clean up any escalated analysis data when starting over (non-blocking)
     if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        try {
-          localStorage.removeItem('escalatedAnalysisData');
-        } catch (error) {
-          // Non-critical error
-        }
-      }, 0);
+      localStorage.removeItem('escalatedAnalysisData');
     }
-    
-    // Immediately update state for fast UI response
     setFormData(null);
     setResolution(null);
     setError(null);
@@ -209,14 +190,117 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
   };
 
   const handleContactAgent = () => {
-    const reason = resolution ? 
-      `Follow-up needed after automated resolution (Ticket: ${resolution.ticketId})` : 
-      'Player requested human agent after automated process';
-    
+    const reason = resolution ? `Follow-up needed after automated resolution (Ticket: ${resolution.ticketId})` : 'Player requested human agent after automated process';
     onEscalateToAgent(reason, formData || undefined, playerProfile || undefined);
   };
 
-  // Render loading state
+  const handleSequentialEscalation = async (data: IntakeFormData, playerProfile: PlayerProfile) => {
+    try {
+      console.log('🔄 Starting sequential escalation with AI analysis...');
+      
+      const escalationPlayerContext = (data as any).escalationPlayerContext;
+      if (!escalationPlayerContext) throw new Error('Missing escalation player context');
+
+      // Step 1: Run AI Analysis (this should take 10-15 seconds)
+      console.log('🤖 Step 1: Running AI analysis via llama3.1...');
+      const analysisStartTime = Date.now();
+      
+      const escalationAnalysisResponse = await fetch('/api/analyze-player-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: data.problemDescription, playerContext: escalationPlayerContext })
+      });
+
+      if (!escalationAnalysisResponse.ok) {
+        const errorText = await escalationAnalysisResponse.text();
+        throw new Error(`Escalation analysis failed: ${escalationAnalysisResponse.status} - ${errorText}`);
+      }
+
+      const escalationAnalysis = await escalationAnalysisResponse.json();
+      const analysisTime = Date.now() - analysisStartTime;
+      console.log(`🤖 AI Analysis completed in ${analysisTime}ms:`, escalationAnalysis);
+      
+      
+      // Step 3: Apply resolution based on AI analysis
+      console.log('🔧 Step 3: Applying resolution based on AI analysis...');
+      let resolutionResult;
+
+      try {
+        // Pass AI analysis results to resolution engine
+        resolutionResult = await AutomatedResolutionEngine.resolveIssue(data, playerProfile, escalationAnalysis);
+      } catch (resolutionError) {
+        console.error('Resolution engine failed:', resolutionError);
+        resolutionResult = {
+          success: false,
+          ticketId: 'FALLBACK-' + Date.now(),
+          resolution: { category: 'escalation', actions: [], timeline: '', followUpInstructions: '' },
+          escalationReason: 'Resolution engine failed - requires human review'
+        };
+      }
+
+      if (resolutionResult.success) {
+        try {
+          await AutomatedResolutionEngine.createAutomatedTicket(data, playerProfile, resolutionResult);
+        } catch (ticketError) {
+          // Continue without ticket - resolution can still proceed
+        }
+
+        const aiAnalysisResult = (data as any).aiAnalysisResult;
+        const detectedSentiment = (data as any).detectedSentiment || aiAnalysisResult?.sentiment;
+        const requiresHumanDelivery = detectedSentiment?.requiresHuman || ['angry', 'frustrated', 'agitated'].includes(detectedSentiment?.tone);
+
+        console.log('🎭 Sentiment Check:', {
+          aiAnalysisResult: !!aiAnalysisResult,
+          detectedSentiment: detectedSentiment,
+          sentimentTone: detectedSentiment?.tone,
+          requiresHuman: detectedSentiment?.requiresHuman,
+          requiresHumanDelivery: requiresHumanDelivery
+        });
+
+        if (requiresHumanDelivery) {
+          const escalationReason = `Customer resolved automatically but requires human touch due to ${detectedSentiment?.tone} sentiment. Resolution ready for personal delivery.`;
+          
+          // Verify escalation analysis data before building data package
+          console.log('🔍 ESCALATION DATA VERIFICATION:');
+          console.log('🔍 escalationAnalysis exists:', !!escalationAnalysis);
+          console.log('🔍 escalationAnalysis structure:', escalationAnalysis);
+          console.log('🔍 automatedResolution exists:', !!resolutionResult);
+          console.log('🔍 automatedResolution structure:', resolutionResult);
+          
+          const dataWithResolution = {
+            ...data,
+            automatedResolution: resolutionResult,
+            escalationAnalysis: escalationAnalysis,
+            humanDeliveryRequired: true,
+            sentimentReason: `${detectedSentiment?.tone} sentiment detected (intensity: ${detectedSentiment?.intensity})`
+          };
+          
+          console.log('🔍 FINAL DATA PACKAGE being passed to onEscalateToAgent:');
+          console.log('🔍 dataWithResolution keys:', Object.keys(dataWithResolution));
+          console.log('🔍 dataWithResolution.escalationAnalysis:', dataWithResolution.escalationAnalysis);
+          console.log('🔍 dataWithResolution.automatedResolution:', dataWithResolution.automatedResolution);
+          setResolution(resolutionResult);
+          setFlowState('escalated_to_agent');
+          await onEscalateToAgent(escalationReason, dataWithResolution, playerProfile);
+        } else {
+          console.log('✅ No human delivery required - showing resolution display');
+          setResolution(resolutionResult);
+          setFlowState('resolution_display');
+        }
+      } else {
+        console.log('❌ Resolution failed - escalating to human agent');
+        const escalationReason = resolutionResult.escalationReason || 'Automated resolution could not resolve this issue';
+        const dataWithAnalysis = { ...data, escalationAnalysis: escalationAnalysis };
+        setResolution(resolutionResult);
+        setFlowState('escalated_to_agent');
+        await onEscalateToAgent(escalationReason, dataWithAnalysis, playerProfile);
+      }
+    } catch (error) {
+      setFlowState('escalated_to_agent');
+      await onEscalateToAgent('Processing failed - escalating to human agent', data, playerProfile);
+    }
+  };
+
   if (flowState === 'loading_profile') {
     return (
       <div className="loading-container">
@@ -271,7 +355,6 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
     );
   }
 
-  // Render processing state
   if (flowState === 'processing') {
     return (
       <div className="processing-container">
@@ -489,93 +572,16 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
     );
   }
 
-  // Render error state
   if (error) {
     return (
-      <div className="error-container">
-        <div className="error-content">
-          <div className="error-icon"></div>
-          <h2>Service Temporarily Unavailable</h2>
-          <p>{error}</p>
-          <button className="retry-button" onClick={loadPlayerProfile}>
-            Try Again
-          </button>
-          <button className="fallback-button" onClick={onReturnToTraditionalChat}>
-            Use Traditional Chat Support
-          </button>
-        </div>
-        
-        <style jsx>{`
-          .error-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            background: #fafafa;
-          }
-          
-          .error-content {
-            text-align: center;
-            padding: 48px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            border-top: 4px solid #7c3aed;
-          }
-          
-          .error-icon {
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background: #7c3aed;
-            margin: 0 auto 16px;
-          }
-          
-          .error-content h2 {
-            margin: 0 0 8px 0;
-            color: #7c3aed;
-          }
-          
-          .error-content p {
-            margin: 0 0 24px 0;
-            color: #64748b;
-          }
-          
-          .retry-button, .fallback-button {
-            display: block;
-            width: 100%;
-            padding: 12px 24px;
-            margin-bottom: 12px;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-          }
-          
-          .retry-button {
-            background: #3b82f6;
-            color: white;
-          }
-          
-          .retry-button:hover {
-            background: #2563eb;
-          }
-          
-          .fallback-button {
-            background: #f3f4f6;
-            color: #374151;
-          }
-          
-          .fallback-button:hover {
-            background: #e5e7eb;
-          }
-        `}</style>
+      <div>
+        <p>{error}</p>
+        <button onClick={loadPlayerProfile}>Try Again</button>
+        <button onClick={onReturnToTraditionalChat}>Use Traditional Chat Support</button>
       </div>
     );
   }
 
-  // Main flow rendering
   if (!playerProfile) return null;
 
   return (
@@ -587,7 +593,6 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
           onEscalate={handleEscalation}
         />
       )}
-      
       {flowState === 'resolution_display' && resolution && (
         <AutomatedResolutionDisplay
           resolution={resolution}
@@ -596,7 +601,6 @@ export default function AutomatedSupportFlow({ onEscalateToAgent, onReturnToTrad
           onContactAgent={handleContactAgent}
         />
       )}
-      
       {flowState === 'escalated_to_agent' && resolution && (
         <div className="redirecting-container">
           <div className="redirecting-content">

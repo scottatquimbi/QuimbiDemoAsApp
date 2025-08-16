@@ -1,6 +1,7 @@
 import './globals.css';
 import { Inter, Roboto_Mono } from 'next/font/google';
 import type { Metadata } from "next";
+import ElectronStyleProvider from './components/ElectronStyleProvider';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -27,6 +28,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${robotoMono.variable} antialiased`}
       >
+        <ElectronStyleProvider />
         {children}
       </body>
     </html>

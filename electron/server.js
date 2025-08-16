@@ -31,8 +31,19 @@ module.exports = function startNextServer(port = 3000) {
       
       // Try to require and run the standalone server directly
       // Use extraResources path which is outside the asar archive
-      const resourcesPath = path.dirname(appPath);
-      const standaloneServer = path.join(resourcesPath, '.next', 'standalone', 'server.js');
+      const isPacked = electronApp.isPackaged;
+      
+      let resourcesPath, standaloneServer;
+      
+      if (isPacked) {
+        // In packaged app, use process.resourcesPath for extraResources
+        resourcesPath = process.resourcesPath;
+        standaloneServer = path.join(resourcesPath, '.next', 'standalone', 'server.js');
+      } else {
+        // In development, use relative path
+        resourcesPath = path.dirname(appPath);
+        standaloneServer = path.join(resourcesPath, '.next', 'standalone', 'server.js');
+      }
       
       console.log(`App path: ${appPath}`);
       console.log(`Resources path: ${resourcesPath}`);

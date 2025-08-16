@@ -1,6 +1,10 @@
 let ollama: any;
 try {
-  ollama = require('ollama');
+  const { Ollama } = require('ollama');
+  // Configure ollama with the correct host
+  const ollamaHost = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+  ollama = new Ollama({ host: ollamaHost });
+  console.log(`🦙 Ollama client configured with host: ${ollamaHost}`);
 } catch (error) {
   console.error('🦙 Failed to import ollama package:', error);
   // Create a mock ollama object to prevent crashes

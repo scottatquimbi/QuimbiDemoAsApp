@@ -32,13 +32,6 @@ const contactOptions: ContactOption[] = [
     route: "/automated-support"
   },
   {
-    title: "Live Chat Support",
-    description: "Real-time conversation with our AI support system for personalized assistance and complex problem solving.",
-    icon: "",
-    available: true,
-    route: "/chat"
-  },
-  {
     title: "Email Support",
     description: "Submit detailed support requests via email with comprehensive responses within 24 hours.",
     icon: "",
@@ -120,7 +113,7 @@ export default function DemoScenarios() {
   
   const handleContactOption = async (option: ContactOption) => {
     if (!option.available) {
-      setError('Email support is coming soon! Please use Live Chat for immediate assistance.');
+      setError('Email support is coming soon! Please use Automated Support for immediate assistance.');
       return;
     }
     

@@ -26,9 +26,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 // DOM ready
 window.addEventListener('DOMContentLoaded', () => {
-  // Add electron class to body for styling
-  document.body.classList.add('electron-app');
-  
   // Handle keyboard shortcuts
   document.addEventListener('keydown', (event) => {
     // Cmd/Ctrl + N for new chat

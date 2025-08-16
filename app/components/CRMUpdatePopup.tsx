@@ -148,23 +148,6 @@ export default function CRMUpdatePopup({
           )}
         </div>
 
-        <div className="performance-metrics">
-          <h3>📈 Performance Metrics</h3>
-          <div className="metrics-grid">
-            <div className="metric">
-              <span className="metric-value">1:24</span>
-              <span className="metric-label">Avg Response Time</span>
-            </div>
-            <div className="metric">
-              <span className="metric-value">98%</span>
-              <span className="metric-label">Customer Satisfaction</span>
-            </div>
-            <div className="metric">
-              <span className="metric-value">3.2</span>
-              <span className="metric-label">Messages to Resolution</span>
-            </div>
-          </div>
-        </div>
 
         {!updateComplete ? (
           <div className="popup-actions">
@@ -345,44 +328,6 @@ export default function CRMUpdatePopup({
           font-weight: 500;
         }
 
-        .performance-metrics {
-          margin-bottom: 24px;
-        }
-
-        .performance-metrics h3 {
-          margin: 0 0 12px 0;
-          font-size: 16px;
-          font-weight: 600;
-          color: #374151;
-        }
-
-        .metrics-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 12px;
-        }
-
-        .metric {
-          text-align: center;
-          padding: 12px;
-          background: #f0f9ff;
-          border: 1px solid #0ea5e9;
-          border-radius: 6px;
-        }
-
-        .metric-value {
-          display: block;
-          font-size: 18px;
-          font-weight: 700;
-          color: #0c4a6e;
-          margin-bottom: 4px;
-        }
-
-        .metric-label {
-          font-size: 12px;
-          color: #0369a1;
-          font-weight: 500;
-        }
 
         .popup-actions {
           display: flex;

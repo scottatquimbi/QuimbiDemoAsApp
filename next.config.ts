@@ -30,6 +30,29 @@ const nextConfig: NextConfig = {
   },
   // Webpack fallback for development stability
   webpack: (config, { dev, isServer }) => {
+    // Race condition debugging
+    if (dev) {
+      console.log(`🔧 [RACE DEBUG] Webpack config called - dev: ${dev}, isServer: ${isServer}, timestamp: ${new Date().toISOString()}`);
+      console.log(`🔧 [RACE DEBUG] Cache directory exists: ${require('fs').existsSync('.next/cache')}`);
+      
+      // Add compilation start/end hooks for race condition detection
+      config.plugins = config.plugins || [];
+      config.plugins.push({
+        apply: (compiler: any) => {
+          compiler.hooks.compilation.tap('RaceConditionDebug', () => {
+            console.log(`🔧 [RACE DEBUG] Compilation started at ${new Date().toISOString()}`);
+          });
+          
+          compiler.hooks.done.tap('RaceConditionDebug', (stats: any) => {
+            console.log(`🔧 [RACE DEBUG] Compilation finished at ${new Date().toISOString()}`);
+            if (stats.hasErrors()) {
+              console.log(`🚨 [RACE DEBUG] Compilation had errors - potential cache race condition`);
+            }
+          });
+        }
+      });
+    }
+    
     if (dev && !isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,

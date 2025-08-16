@@ -35,35 +35,47 @@ function extractJsonFromOllamaResponse(text: string): any | null {
       };
     }
 
-    // Ollama models usually return cleaner JSON, try direct parsing first
+
+    // Method 1: Try direct parsing first
     try {
-      return JSON.parse(text.trim());
+      const parsed = JSON.parse(text.trim());
+      return parsed;
     } catch (directParseError) {
-      console.log('🦙 Direct JSON parse failed, searching for JSON pattern...');
+      // Continue to extraction methods
     }
 
-    // Look for JSON pattern more aggressively
+    // Method 2: Extract JSON from markdown code blocks (common Ollama response format)
+    const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (codeBlockMatch) {
+      try {
+        const extracted = JSON.parse(codeBlockMatch[1]);
+        return extracted;
+      } catch (parseError) {
+        // Continue to next method
+      }
+    }
+
+    // Method 3: Look for JSON pattern without code blocks
     let jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        return JSON.parse(jsonMatch[0]);
+        const extracted = JSON.parse(jsonMatch[0]);
+        return extracted;
       } catch (parseError) {
-        console.log('🦙 JSON pattern match failed, trying stricter match...');
-        
-        // Try to find a more specific JSON pattern
+        // Method 4: Try to find a more specific JSON pattern
         const stricterMatch = text.match(/\{\s*"detected"[\s\S]*\}/);
         if (stricterMatch) {
           try {
-            return JSON.parse(stricterMatch[0]);
+            const extracted = JSON.parse(stricterMatch[0]);
+            return extracted;
           } catch (error) {
-            console.log('🦙 Stricter JSON match also failed');
+            // Continue to fallback
           }
         }
       }
     }
     
     // If no valid JSON pattern was found, return a default response
-    console.log('🦙 No valid JSON found in Ollama response, using default');
     return { 
       "detected": false,
       "issueType": null,
@@ -109,11 +121,31 @@ export interface SentimentAnalysisResult {
  * @param message The player's message
  * @returns Issue detection result
  */
-export async function detectIssue(message: string): Promise<IssueDetectionResult> {
+export async function detectIssue(message: string, playerContext?: any): Promise<IssueDetectionResult> {
   try {
     console.log('🦙 Detecting issue with Ollama...');
     
-    // FIRST: Try AI analysis with Ollama
+    // Check Ollama health before attempting analysis
+    try {
+      const healthResponse = await fetch('http://127.0.0.1:11434/api/tags');
+      if (!healthResponse.ok) {
+        throw new Error(`Ollama health check failed: ${healthResponse.status}`);
+      }
+      const healthData = await healthResponse.json();
+      
+      // Check if llama3.1:8b is available
+      const requiredModel = 'llama3.1:8b';
+      const hasRequiredModel = healthData.models?.some((m: any) => m.name === requiredModel);
+      
+      if (!hasRequiredModel) {
+        throw new Error(`Required model ${requiredModel} not found`);
+      }
+    } catch (healthError) {
+      console.error('🦙 Ollama health check failed:', healthError);
+      throw new Error(`Ollama not available: ${healthError instanceof Error ? healthError.message : 'Unknown error'}`);
+    }
+    
+    // SECOND: Try AI analysis with Ollama
     
     // Use llama3.1 for detailed analysis
     const analysisPrompt = `You are an AI analyzing a player's support request in a mobile game (Game of Thrones).
@@ -133,7 +165,8 @@ Also determine the severity/impact:
 - Minor: Small inconvenience, very minor impact on gameplay
 - Minimal: Trivial issue with negligible impact
 
-You MUST return ONLY a valid JSON response with these exact fields:
+CRITICAL: You must respond with ONLY the JSON object below. Do not include any markdown formatting, code blocks, backticks, or additional text.
+
 {
   "detected": true/false,
   "issueType": "technical"/"account"/"gameplay"/null,
@@ -144,25 +177,40 @@ You MUST return ONLY a valid JSON response with these exact fields:
 
 Return only the JSON, no other text.`;
 
-    const responseText = await generateAnalysisText(analysisPrompt, {
+    console.log('🦙 Sending analysis to Ollama...');
+    
+    const startTime = Date.now();
+    
+    // Add timeout to prevent hanging
+    const ollamaPromise = generateAnalysisText(analysisPrompt, {
       temperature: 0.2,
       maxTokens: 512
     });
     
-    console.log('🦙 RAW OLLAMA RESPONSE:', responseText);
-    console.log('🦙 RESPONSE LENGTH:', responseText?.length || 0);
-    console.log('🦙 RESPONSE TYPE:', typeof responseText);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Ollama request timeout after 15 seconds')), 15000);
+    });
+    
+    const responseText = await Promise.race([ollamaPromise, timeoutPromise]);
+    const duration = Date.now() - startTime;
+    
+    console.log('🦙 Analysis completed in', duration + 'ms');
+    console.log('🦙 Raw Ollama response:', responseText);
     
     // Extract JSON from the response using our helper
     const analysisResult = extractJsonFromOllamaResponse(responseText);
-    console.log('🦙 PARSED RESULT:', analysisResult);
+    console.log('🦙 Parsed analysis result:', analysisResult);
+    
     if (analysisResult && analysisResult.detected) {
-      console.log('🦙 AI ANALYSIS SUCCESSFUL - using AI result');
+      console.log('🦙 Issue detected via AI analysis');
       return analysisResult as IssueDetectionResult;
+    } else {
+      console.log('🦙 Issue NOT detected via AI analysis - analysisResult:', analysisResult);
+      console.log('🦙 analysisResult.detected:', analysisResult?.detected);
     }
     
     // FALLBACK: If AI analysis fails, try keyword detection
-    console.log('🦙 AI analysis failed or returned negative - trying keyword fallback...');
+    console.log('🦙 AI analysis negative - trying keyword fallback...');
     
     const messageLower = message.toLowerCase();
     const issueKeywords = [
@@ -174,25 +222,75 @@ Return only the JSON, no other text.`;
     const hasIssueKeyword = issueKeywords.some(keyword => messageLower.includes(keyword));
     
     if (hasIssueKeyword) {
-      console.log('🦙 KEYWORD FALLBACK TRIGGERED - AI failed but keywords found:', message);
-      console.log('🦙 Matching keywords:', issueKeywords.filter(keyword => messageLower.includes(keyword)));
+      console.log('🛡️ Keyword override - Issue detected');
       return {
         detected: true,
         issueType: messageLower.includes('login') || messageLower.includes('access') || messageLower.includes('locked') || messageLower.includes('get in') ? 'account' : 'technical',
-        description: `Issue detected via keyword fallback: ${issueKeywords.filter(keyword => messageLower.includes(keyword)).join(', ')}`,
+        description: `Issue keywords detected`,
         playerImpact: 'moderate',
-        confidenceScore: 0.7 // Lower confidence for keyword fallback
+        confidenceScore: 0.8
       };
     }
     
-    // Both AI and keywords failed
-    console.log('🦙 Both AI analysis and keyword detection failed - no issue detected');
+    // Both AI and keywords failed - but this is customer support, so help anyway
+    console.log('🛡️ Treating as general inquiry');
     
-    return { detected: false, issueType: null, description: 'No issue detected', playerImpact: null, confidenceScore: 0.1 };
+    return { 
+      detected: true, 
+      issueType: 'technical', 
+      description: 'General customer inquiry requiring assistance', 
+      playerImpact: 'minor', 
+      confidenceScore: 0.5 
+    };
   } catch (error) {
-    console.error('🦙 Error analyzing player message with Ollama:', error);
-    // Fall back to the original keyword-based method if Ollama fails
-    return { detected: false, issueType: null, description: 'Ollama parsing failed', playerImpact: 'minimal', confidenceScore: 0.1 };
+    console.error('🦙 Ollama error:', error instanceof Error ? error.message : 'Unknown');
+    console.log('🛡️ Checking for automated resolution fallback...');
+    
+    // Check if there's an automated resolution available in the context
+    const freeformContext = (playerContext as any)?.freeformContext || '';
+    const hasAutomatedResolution = freeformContext.includes('ESCALATED FROM AUTOMATED SUPPORT') || 
+                                    freeformContext.includes('AUTOMATED RESOLUTION AVAILABLE');
+    
+    if (hasAutomatedResolution) {
+      console.log('🤖 Using automated resolution fallback');
+      
+      // Extract resolution category from context
+      let issueType: 'technical' | 'account' | 'gameplay' = 'technical';
+      let playerImpact: 'minimal' | 'minor' | 'moderate' | 'severe' | 'critical' = 'moderate';
+      let description = 'Automated resolution available';
+      
+      if (freeformContext.includes('Account Access')) {
+        issueType = 'account';
+        playerImpact = 'severe';
+        description = 'Account access issue with automated resolution available';
+      } else if (freeformContext.includes('Technical') || freeformContext.includes('Performance')) {
+        issueType = 'technical';
+        playerImpact = 'moderate';
+        description = 'Technical issue with automated resolution available';
+      } else if (freeformContext.includes('Gameplay') || freeformContext.includes('Game')) {
+        issueType = 'gameplay';
+        playerImpact = 'moderate';
+        description = 'Gameplay issue with automated resolution available';
+      }
+      
+      return { 
+        detected: true, 
+        issueType, 
+        description,
+        playerImpact, 
+        confidenceScore: 0.8 // Higher confidence since there's a concrete resolution
+      };
+    }
+    
+    // Standard fallback when no automated resolution is available
+    console.log('🛡️ Standard fallback - general inquiry');
+    return { 
+      detected: true, 
+      issueType: 'technical', 
+      description: 'Technical analysis failed - treating as general customer inquiry', 
+      playerImpact: 'minor', 
+      confidenceScore: 0.3 
+    };
   }
 }
 
@@ -203,7 +301,7 @@ Return only the JSON, no other text.`;
  */
 export async function analyzeSentiment(message: string): Promise<SentimentAnalysisResult> {
   try {
-    console.log('🦙 Analyzing sentiment with Ollama...');
+    console.log('🦙 Analyzing sentiment...');
     
     // Use the faster Llama model for sentiment analysis
     const analysisPrompt = `You are an AI analyzing the sentiment and tone of a player's support request in a mobile game.
@@ -216,22 +314,32 @@ Analyze this message to determine:
 3. Whether this seems like a repeat issue based on language patterns
 4. How common this type of issue typically is in mobile gaming
 
-You MUST return ONLY a valid JSON response with these exact fields:
+CRITICAL: You must respond with ONLY the JSON object below. Do not include any markdown formatting, code blocks, backticks, or additional text.
+
 {
   "tone": "neutral"/"frustrated"/"angry"/"confused"/"appreciative",
   "urgency": "low"/"medium"/"high",
   "repeatIssue": true/false,
   "issueFrequency": "unique"/"uncommon"/"common"/"very common"
-}
+}`;
 
-Return only the JSON, no other text.`;
-
-    const responseText = await generateFastText(analysisPrompt, {
+    
+    const startTime = Date.now();
+    
+    // Add timeout to prevent hanging
+    const ollamaPromise = generateFastText(analysisPrompt, {
       temperature: 0.2,
       maxTokens: 256
     });
     
-    console.log('🦙 Ollama sentiment analysis response:', responseText);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Sentiment analysis timeout after 10 seconds')), 10000);
+    });
+    
+    const responseText = await Promise.race([ollamaPromise, timeoutPromise]);
+    const duration = Date.now() - startTime;
+    
+    console.log('🦙 Sentiment completed in', duration + 'ms');
     
     // Extract JSON from the response using our helper
     const analysisResult = extractJsonFromOllamaResponse(responseText);
@@ -244,8 +352,27 @@ Return only the JSON, no other text.`;
     return { tone: 'neutral', urgency: 'medium', repeatIssue: false, issueFrequency: 'unique' };
   } catch (error) {
     console.error('🦙 Error analyzing sentiment with Ollama:', error);
-    // Fall back to the original keyword-based method if Ollama fails
-    return { tone: 'neutral', urgency: 'medium', repeatIssue: false, issueFrequency: 'unique' };
+    console.log('🛡️ Sentiment analysis fallback - checking for escalated context');
+    
+    // Check message for obvious sentiment indicators as fallback
+    const messageLower = message.toLowerCase();
+    let tone: 'neutral' | 'frustrated' | 'angry' | 'confused' | 'appreciative' = 'neutral';
+    let urgency: 'low' | 'medium' | 'high' = 'medium';
+    
+    // Check for anger/frustration indicators
+    if (messageLower.includes('broken') && (messageLower.includes('!!!!') || messageLower.includes('FIX IT'))) {
+      tone = 'angry';
+      urgency = 'high';
+    } else if (messageLower.includes('help') || messageLower.includes('please')) {
+      tone = 'neutral';
+      urgency = 'medium';
+    } else if (messageLower.includes('frustrated') || messageLower.includes('annoying')) {
+      tone = 'frustrated';
+      urgency = 'high';
+    }
+    
+    console.log('🛡️ Keyword-based sentiment fallback:', { tone, urgency });
+    return { tone, urgency, repeatIssue: false, issueFrequency: 'common' };
   }
 }
 
@@ -393,7 +520,61 @@ async function recommendCompensationLocal(
 ): Promise<any> {
   console.log('🦙 Generating local compensation recommendation...');
   
-  // For account lock issues, provide standard compensation
+  // Check if there's automated resolution context available
+  const freeformContext = (playerContext as any).freeformContext || '';
+  const hasAutomatedResolution = freeformContext.includes('ESCALATED FROM AUTOMATED SUPPORT') || 
+                                  freeformContext.includes('AUTOMATED RESOLUTION AVAILABLE');
+  
+  if (hasAutomatedResolution) {
+    console.log('🤖 ✅ AUTOMATED RESOLUTION CONTEXT DETECTED - Using resolution-based compensation');
+    
+    // Extract compensation info from automated resolution context
+    let tier = 'P3';
+    let reasoning = 'Automated resolution available with AI analysis fallback';
+    let requiresHumanReview = true; // Always require review for escalated cases
+    let baseCompensation = { gold: 2000, gems: 50 };
+    
+    // Check if compensation was already determined in the resolution
+    if (freeformContext.includes('Compensation: None')) {
+      tier = 'P5'; // No compensation needed, just service recovery
+      baseCompensation = { gold: 0, gems: 0 };
+      reasoning = 'Automated resolution provided - no additional compensation needed';
+    } else if (freeformContext.includes('Account Access')) {
+      tier = 'P2';
+      baseCompensation = { gold: 5000, gems: 100 };
+      reasoning = 'Account access issue with automated resolution - compensation for inconvenience';
+    } else if (freeformContext.includes('angry sentiment') || freeformContext.includes('intensity: 9')) {
+      tier = 'P1'; // Escalate compensation for angry customers
+      baseCompensation = { gold: 7500, gems: 150 };
+      reasoning = 'Automated resolution with high sentiment intensity - enhanced compensation for experience recovery';
+    }
+    
+    // Apply VIP multipliers
+    if (playerContext.vipLevel && playerContext.vipLevel >= 10) {
+      baseCompensation.gold *= 1.5;
+      baseCompensation.gems *= 1.5;
+      if (tier === 'P2') tier = 'P1';
+      reasoning += ' (VIP premium adjustment applied)';
+    }
+    
+    console.log('🤖 Resolution-based compensation:', { tier, reasoning, baseCompensation });
+    
+    return {
+      tier,
+      reasoning,
+      suggestedCompensation: {
+        gold: Math.round(baseCompensation.gold),
+        gems: Math.round(baseCompensation.gems),
+        resources: baseCompensation.gold > 0 ? { food: 500, wood: 500 } : {}
+      },
+      requiresHumanReview,
+      estimatedReviewTime: '15-30 minutes',
+      alternativeActions: ['Deliver automated resolution personally'],
+      preventionSuggestions: ['Automated system improvements']
+    };
+  }
+  
+  // Standard logic for cases without automated resolution
   if (issueResult.issueType === 'account') {
     let tier = 'P2';
     let gold = 5000;
@@ -558,57 +739,74 @@ async function processAccountLockIssue(message: string, playerContext: PlayerCon
 }
 
 export async function analyzePlayerMessage(message: string, playerContext: PlayerContext) {
-  console.log('🦙 Starting Ollama-powered player message analysis...');
-  console.log('🦙 ANALYZE MESSAGE INPUT:', message);
-  console.log('🦙 ANALYZE MESSAGE LENGTH:', message.length);
-  console.log('🦙 ANALYZE MESSAGE TYPE:', typeof message);
+  console.log('🦙 Starting analysis:', { messageLength: message.length, contextKeys: Object.keys(playerContext) });
   
   // Check for account lock issues first - this takes priority over AI analysis
   if ((playerContext as any).accountStatus === 'locked') {
-    console.log('🔐 Account lock detected - overriding AI analysis with account access issue');
+    console.log('🔐 Account lock detected - account is locked, treating any player message as account access issue');
     
-    // Check if the message indicates account access issues
-    const messageLower = message.toLowerCase();
-    const isAccountAccessIssue = messageLower.includes('login') || 
-                                messageLower.includes('access') ||
-                                messageLower.includes('locked') ||
-                                messageLower.includes('cannot') ||
-                                messageLower.includes('log in') ||
-                                messageLower.includes('sign in');
+    const lockReason = (playerContext as any).lockReason || 'security';
     
-    if (isAccountAccessIssue) {
-      const lockReason = (playerContext as any).lockReason || 'security';
-      
-      // Force account access issue detection
-      const accountLockIssue = {
-        detected: true,
-        issueType: 'account' as const,
-        description: `Account access issue - account is locked due to ${lockReason}`,
-        playerImpact: 'critical' as const,
-        confidenceScore: 1.0
-      };
-      
-      console.log('🔐 Account lock issue detected:', accountLockIssue);
-      
-      // Continue with analysis but use the account lock detection
-      return await processAccountLockIssue(message, playerContext, accountLockIssue);
-    }
+    // Force account access issue detection regardless of message content
+    // If their account is locked, any complaint is fundamentally about account access
+    const accountLockIssue = {
+      detected: true,
+      issueType: 'account' as const,
+      description: `Account access issue - account is locked due to ${lockReason}. Player cannot access game properly.`,
+      playerImpact: 'critical' as const,
+      confidenceScore: 1.0
+    };
+    
+    console.log('🔐 Account lock issue detected:', accountLockIssue);
+    
+    // Return the account lock analysis immediately
+    return await processAccountLockIssue(message, playerContext, accountLockIssue);
   }
   
   // Detect issues in the message using Ollama
-  console.log('🦙 CALLING detectIssue with message:', message);
-  const issueDetection = await detectIssue(message);
-  console.log('🦙 detectIssue RESULT:', issueDetection);
+  let issueDetection = await detectIssue(message, playerContext);
   
-  // If no issue detected, return minimal result
+  // CUSTOMER SUPPORT RULE: Never return "no issue" - always try to help
+  // If AI says no issue, check keywords and context to override bad AI assessment
   if (!issueDetection.detected) {
-    console.log('🦙 No issue detected, returning early');
-    return {
-      issueDetected: false
-    };
+    console.log('🦙 AI said no issue - checking keywords and context to override bad assessment');
+    
+    // Check for obvious issue keywords that AI missed
+    const messageLower = message.toLowerCase();
+    const issueKeywords = [
+      'broken', 'help', 'problem', 'issue', 'bug', 'crash', 'error', 
+      'cant', "can't", 'wont', "won't", 'missing', 'lost', 'locked', 
+      'access', 'login', 'fail', 'failed', 'not work', 'doesnt work', 
+      "doesn't work", 'get in', 'log in', 'stuck', 'freeze', 'frozen'
+    ];
+    const hasIssueKeyword = issueKeywords.some(keyword => messageLower.includes(keyword));
+    
+    // Check for account lock status in player context
+    const isAccountLocked = (playerContext as any).accountStatus === 'locked';
+    
+    if (hasIssueKeyword || isAccountLocked) {
+      console.log('🛡️ Customer support override detected');
+      
+      // Override AI with keyword-based detection
+      issueDetection = {
+        detected: true,
+        issueType: (messageLower.includes('login') || messageLower.includes('access') || messageLower.includes('locked') || isAccountLocked) ? 'account' : 'technical',
+        description: `Customer support override: ${hasIssueKeyword ? 'Issue keywords detected' : 'Account status requires attention'}`,
+        playerImpact: 'moderate',
+        confidenceScore: 0.8
+      };
+    } else {
+      // Even with no clear indicators, treat as a general inquiry in customer support context
+      issueDetection = {
+        detected: true,
+        issueType: 'technical',
+        description: 'General customer inquiry requiring assistance',
+        playerImpact: 'minor',
+        confidenceScore: 0.5
+      };
+    }
   }
   
-  console.log('🦙 Issue detected, continuing with full analysis...');
   
   // Use Ollama to analyze if the freeform context contradicts the player's claim
   let possibleDeception = false;
@@ -752,9 +950,10 @@ export async function analyzePlayerMessage(message: string, playerContext: Playe
     // Keep the original reasoning if Ollama fails
   }
   
+  console.log('🦙 ========== ANALYSIS COMPLETE ==========');
   console.log('🦙 Ollama analysis complete!');
   
-  return {
+  const finalResult = {
     issueDetected: true,
     issue: {
       issueType: issueDetection.issueType,
@@ -765,6 +964,15 @@ export async function analyzePlayerMessage(message: string, playerContext: Playe
     sentiment,
     compensation
   };
+  
+  console.log('🦙 FINAL RESULT STRUCTURE:', Object.keys(finalResult));
+  console.log('🦙 FINAL RESULT ISSUE DETECTED:', finalResult.issueDetected);
+  console.log('🦙 FINAL RESULT ISSUE TYPE:', finalResult.issue?.issueType);
+  console.log('🦙 FINAL RESULT HAS COMPENSATION:', !!finalResult.compensation);
+  console.log('🦙 FINAL RESULT COMPENSATION TIER:', finalResult.compensation?.tier);
+  console.log('🦙 =======================================');
+  
+  return finalResult;
 }
 
 // Re-export shared utilities that don't need to be changed

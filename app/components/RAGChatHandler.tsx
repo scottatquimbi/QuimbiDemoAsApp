@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Message } from 'ai';
-import { PlayerContext } from '@/lib/models';
+import { PlayerContext } from '@/app/types/player';
 import ChatInput from './ChatInput';
 import MessageList from './MessageList';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,6 +17,7 @@ interface RAGChatHandlerProps {
   playerContext: PlayerContext;
   gameId?: string;
   onCompensationData?: (data: any) => void;
+  onPlayerContextUpdate?: (playerContext: PlayerContext) => void;
 }
 
 // Define an extended player context type that includes all the required properties
@@ -32,7 +33,8 @@ interface CompensationPlayerContext {
 export default function RAGChatHandler({ 
   playerContext, 
   gameId = 'got',
-  onCompensationData 
+  onCompensationData,
+  onPlayerContextUpdate
 }: RAGChatHandlerProps) {
   console.log('🎯 RAGChatHandler: Component instantiated with playerContext:', playerContext.playerName);
   // State for UI
@@ -77,23 +79,57 @@ export default function RAGChatHandler({
   const [followUpMessagesSent, setFollowUpMessagesSent] = useState(false); // Guard against duplicate follow-up messages
   const [compensationConfirmationSent, setCompensationConfirmationSent] = useState(false); // Guard against duplicate compensation messages
   const [startTime] = useState(Date.now());
+  
+  // Track the effective player context (may be updated from escalated analysis)
+  const [effectivePlayerContext, setEffectivePlayerContext] = useState<PlayerContext>(playerContext);
+  
+  // Track when we're processing escalated analysis (should show full loading screen)
+  const [processingEscalatedAnalysis, setProcessingEscalatedAnalysis] = useState<boolean>(false);
+  
+  // Update effective player context when props change
+  useEffect(() => {
+    setEffectivePlayerContext(playerContext);
+  }, [playerContext]);
 
   // Debug: Log component mounting and check for escalated analysis data
   useEffect(() => {
     console.log('🎯 RAGChatHandler: Component mounted/remounted with player:', playerContext.playerName);
     
-    // Check for escalated analysis data from automated support
+    // Check for escalated analysis data from automated support (but don't process immediately)
     if (typeof window !== 'undefined') {
+      console.log('🔍 Checking localStorage for escalatedAnalysisData...');
       const escalatedAnalysisData = localStorage.getItem('escalatedAnalysisData');
+      console.log('🔍 LocalStorage escalatedAnalysisData exists:', !!escalatedAnalysisData);
+      
       if (escalatedAnalysisData) {
-        console.log('🔄 Found escalated analysis data, triggering immediate three-part response');
+        console.log('🔄 Found escalated analysis data, will process after user submits message');
         try {
           const analysisData = JSON.parse(escalatedAnalysisData);
-          handleEscalatedAnalysis(analysisData);
-          localStorage.removeItem('escalatedAnalysisData'); // Clean up
+          console.log('🔄 PARSED ESCALATED DATA:', analysisData);
+          
+          // Set loading state immediately
+          setProcessingEscalatedAnalysis(true);
+          
+          // Auto-populate the initial message if available
+          if (analysisData.problemDescription) {
+            console.log('🔄 Auto-populating initial message:', analysisData.problemDescription);
+            // Add the initial message as if the user typed it
+            const initialMessage: Message = {
+              id: uuidv4(),
+              role: 'user',
+              content: analysisData.problemDescription
+            };
+            setMessages([initialMessage]);
+            
+            // Process the escalated analysis and automatically submit to AI
+            handleEscalatedAnalysisWithAI(analysisData, initialMessage);
+            localStorage.removeItem('escalatedAnalysisData'); // Clean up
+          }
         } catch (error) {
           console.error('🚨 Error parsing escalated analysis data:', error);
         }
+      } else {
+        console.log('📭 No escalated analysis data found in localStorage');
       }
     }
     
@@ -104,7 +140,7 @@ export default function RAGChatHandler({
   
   // Use the compensation hook with approval workflow
   const compensationHook = useCompensation(
-    playerContext,
+    effectivePlayerContext,
     null, // streamData - not used in RAG handler
     null, // data - not used in RAG handler
     isResponseStreaming,
@@ -495,26 +531,391 @@ export default function RAGChatHandler({
     setWorkflowStage('crm_complete');
   };
   
-  // Handle escalated analysis data from automated support
-  const handleEscalatedAnalysis = (analysisData: any) => {
-    console.log('🎯 Processing escalated analysis data:', analysisData);
+  // Handle escalated analysis data and automatically submit to AI
+  const handleEscalatedAnalysisWithAI = async (analysisData: any, userMessage: Message) => {
+    console.log('🎯 RAGChatHandler: Processing escalated analysis with AI submission');
+    console.log('🔍 RAGChatHandler: Analysis data keys:', Object.keys(analysisData));
+    console.log('🔍 RAGChatHandler: User message:', userMessage.content);
     
-    // Generate AI response based on escalated analysis
+    // First update the player context from escalated data and get the updated context
+    const updatedPlayerContext = await updatePlayerContextFromEscalatedData(analysisData);
+    
+    // Set loading states
+    setIsLoading(true);
+    setWaitingForResponse(true);
+    setIsResponseStreaming(true);
+    setError(null);
+    
+    try {
+      // Submit to AI with the escalated data and updated player context
+      const response = await fetch('/api/chat-smart', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [userMessage],
+          playerContext: {
+            ...updatedPlayerContext,
+            playerId: playerId
+          },
+          gameId,
+          escalatedAnalysis: analysisData.escalationAnalysis, // Include the escalated analysis
+          automatedResolution: analysisData.automatedResolution // Include automated resolution if available
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('🔍 AI response to escalated data:', result);
+      
+      // Process the AI response normally
+      await processAIResponse(result, userMessage.content);
+      
+    } catch (error) {
+      console.error('🚨 Error submitting escalated data to AI:', error);
+      setError(error as Error);
+      
+      // Fallback to old escalated analysis handling
+      handleEscalatedAnalysis(analysisData);
+    } finally {
+      setIsLoading(false);
+      setWaitingForResponse(false);
+      setIsResponseStreaming(false);
+      setProcessingEscalatedAnalysis(false);
+    }
+  };
+
+  // Extract player context updating logic for reuse
+  const updatePlayerContextFromEscalatedData = async (analysisData: any): Promise<PlayerContext> => {
+    console.log('👤 RAGChatHandler: Updating player context from escalated data');
+    
+    // Extract player profile data from escalated analysis
+    const playerProfile = analysisData.playerProfile;
+    console.log('👤 RAGChatHandler: Player profile from escalated analysis:', playerProfile);
+    
+    // Update player context with real data if available
+    if (playerProfile) {
+      const contextToUse = {
+        ...playerContext,
+        // Basic player info
+        playerId: playerProfile.player_id || playerProfile.playerId || playerContext.playerId,
+        playerName: playerProfile.player_name || playerProfile.playerName || playerContext.playerName,
+        gameLevel: playerProfile.game_level || playerProfile.gameLevel || playerContext.gameLevel,
+        vipLevel: playerProfile.vip_level || playerProfile.vipLevel || playerContext.vipLevel,
+        totalSpend: playerProfile.total_spend || playerProfile.totalSpend || playerContext.totalSpend,
+        sessionDays: playerProfile.session_days || playerProfile.sessionDays || playerContext.sessionDays,
+        isSpender: playerProfile.is_spender !== undefined ? playerProfile.is_spender : (playerProfile.totalSpend > 0 || playerContext.isSpender),
+        
+        // Account status and security fields
+        accountStatus: playerProfile.account_status || playerContext.accountStatus,
+        lockReason: playerProfile.lock_reason || playerContext.lockReason,
+        verificationPending: playerProfile.verification_pending !== undefined ? playerProfile.verification_pending : playerContext.verificationPending,
+        
+        // Technical and device fields
+        recentCrashes: playerProfile.recent_crashes !== undefined ? playerProfile.recent_crashes : playerContext.recentCrashes,
+        crashFrequency: playerProfile.crash_frequency || playerContext.crashFrequency,
+        lastCrashAt: playerProfile.last_crash_at || playerContext.lastCrashAt,
+        deviceType: playerProfile.device_type || playerContext.deviceType,
+        appVersion: playerProfile.app_version || playerContext.appVersion,
+        osVersion: playerProfile.os_version || playerContext.osVersion,
+        connectionQuality: playerProfile.connection_quality || playerContext.connectionQuality,
+        
+        // Support and analytics fields
+        supportTier: playerProfile.support_tier || playerContext.supportTier,
+        churnRisk: playerProfile.churn_risk || playerContext.churnRisk,
+        sentimentHistory: playerProfile.sentiment_history || playerContext.sentimentHistory,
+        previousIssues: playerProfile.previous_issues !== undefined ? playerProfile.previous_issues : playerContext.previousIssues
+      };
+      console.log('👤 RAGChatHandler: Updated player context:', contextToUse);
+      
+      // Update effective player context for local use (compensation hook, etc.)
+      setEffectivePlayerContext(contextToUse);
+      
+      // Update parent component's player context if callback provided
+      if (onPlayerContextUpdate) {
+        console.log('👤 RAGChatHandler: Updating parent player context');
+        onPlayerContextUpdate(contextToUse);
+      }
+      
+      return contextToUse;
+    }
+    
+    // Return existing context if no profile data
+    return effectivePlayerContext;
+  };
+
+  // Process AI response (extracted from originalHandleSubmit for reuse)
+  const processAIResponse = async (result: any, originalUserMessage: string) => {
+    // Check if we have structured response data
+    if (result.problemSummary && result.solution) {
+      console.log('🎯 Structured response detected - showing issue summary popup first');
+      
+      // Prepare issue analysis data for popup with proper third-person report format
+      const generateThirdPersonDescription = (data: any, message: string) => {
+        const playerName = effectivePlayerContext.playerName || 'Player';
+        const issueType = data?.issue?.issueType || 'technical';
+        const description = data?.issue?.description;
+        
+        if (description && description !== 'Player reported an issue') {
+          return `${playerName} has reported: ${description}`;
+        }
+        
+        // Generate description based on message content and issue type
+        const messageLower = message.toLowerCase();
+        if (messageLower.includes('missing') || messageLower.includes('lost')) {
+          return `${playerName} reports missing game resources or rewards that were expected to be received.`;
+        } else if (messageLower.includes('crash') || messageLower.includes('freeze')) {
+          return `${playerName} is experiencing game stability issues including crashes or freezing during gameplay.`;
+        } else if (messageLower.includes('bug') || messageLower.includes('glitch')) {
+          return `${playerName} has encountered a game bug or glitch affecting their gameplay experience.`;
+        } else if (messageLower.includes('purchase') || messageLower.includes('payment')) {
+          return `${playerName} is reporting an issue related to in-game purchases or payment transactions.`;
+        } else if (messageLower.includes('account') || messageLower.includes('login')) {
+          return `${playerName} is experiencing difficulties with account access or authentication.`;
+        } else {
+          return `${playerName} has submitted a ${issueType} support request requiring investigation and resolution.`;
+        }
+      };
+
+      const analysisData = {
+        playerName: effectivePlayerContext.playerName || 'Unknown Player',
+        issueType: result.compensationData?.issue?.issueType || 'General Support',
+        description: generateThirdPersonDescription(result.compensationData, originalUserMessage),
+        severity: result.compensationData?.compensation?.tier || 'P5',
+        confidenceScore: result.compensationData?.issue?.confidenceScore || 0.8
+      };
+      
+      const compensationDetails = result.compensationData?.compensation ? {
+        tier: result.compensationData.compensation.tier,
+        gold: result.compensationData.compensation.suggestedCompensation?.gold,
+        resources: result.compensationData.compensation.suggestedCompensation?.resources,
+        reasoning: result.compensationData.compensation.reasoning?.replace(/^I've|^I have/, 'Analysis has') || 'Compensation recommended based on issue severity and player impact',
+        requiresApproval: result.compensationData.compensation.requiresHumanReview || false
+      } : null;
+      
+      // Store data for later use
+      setThreePartData({
+        problemSummary: result.problemSummary,
+        solution: result.solution,
+        compensation: result.compensationText || '',
+        hasCompensation: result.hasCompensation || false
+      });
+      
+      setIssueAnalysisData({ analysisData, compensationDetails });
+      
+      // Show issue summary popup first
+      setWorkflowStage('analysis_pending');
+      setShowIssueSummaryPopup(true);
+      
+      return;
+    }
+    
+    // Handle compensation data if present
+    if (result.compensation && result.compensation.issueDetected) {
+      console.log('🎯 Compensation analysis detected issue - requiring approval before showing response');
+      
+      // Transform the API data structure to match what the frontend expects
+      const transformedData = {
+        issueDetected: result.compensation.issueDetected,
+        issue: result.compensation.issue,
+        sentiment: result.compensation.sentiment,
+        recommendation: result.compensation.compensation,
+        aiSummary: `AI analysis detected an issue requiring compensation. Player: ${effectivePlayerContext.playerName || 'Unknown'}, Issue: ${result.compensation.issue?.type || 'general'}. Compensation tier: ${result.compensation.compensation?.tier || 'unknown'}.`
+      };
+      
+      // Set the compensation data for the approval workflow
+      compensationHook.setRawCompensationData(transformedData);
+      
+      // Store the AI response for later approval
+      setPendingAiResponse(result.content);
+      setAwaitingApproval(true);
+      
+      // Clear escalated analysis loading state - AI response is ready to be shown
+      setProcessingEscalatedAnalysis(false);
+      
+      if (onCompensationData) {
+        onCompensationData(result.compensation);
+      }
+      return;
+    }
+    
+    // Handle regular response - add assistant message
+    const assistantMessage: Message = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: result.content || result.message || 'I apologize, but I encountered an issue processing your request. Please try again.'
+    };
+    
+    setMessages(prev => [...prev, assistantMessage]);
+    
+    // Clear escalated analysis loading state - response is complete
+    setProcessingEscalatedAnalysis(false);
+  };
+
+  // Handle escalated analysis data from automated support (legacy fallback)
+  const handleEscalatedAnalysis = (analysisData: any) => {
+    console.log('🎯 RAGChatHandler: Processing escalated analysis data');
+    console.log('🔍 RAGChatHandler: Analysis data keys:', Object.keys(analysisData));
+    console.log('🔍 RAGChatHandler: Full analysis data:', analysisData);
+    
+    // Check for automated resolution data as fallback
+    const automatedResolution = analysisData.automatedResolution;
+    console.log('🤖 RAGChatHandler: Automated resolution available:', !!automatedResolution);
+    if (automatedResolution) {
+      console.log('🤖 RAGChatHandler: Automated resolution data:', automatedResolution);
+    }
+    
+    // Extract player profile data from escalated analysis
+    const playerProfile = analysisData.playerProfile;
+    console.log('👤 RAGChatHandler: Player profile from escalated analysis:', playerProfile);
+    
+    // Update player context with real data if available
+    let contextToUse = playerContext;
+    if (playerProfile) {
+      contextToUse = {
+        ...playerContext,
+        // Basic player info
+        playerId: playerProfile.player_id || playerProfile.playerId || playerContext.playerId,
+        playerName: playerProfile.player_name || playerProfile.playerName || playerContext.playerName,
+        gameLevel: playerProfile.game_level || playerProfile.gameLevel || playerContext.gameLevel,
+        vipLevel: playerProfile.vip_level || playerProfile.vipLevel || playerContext.vipLevel,
+        totalSpend: playerProfile.total_spend || playerProfile.totalSpend || playerContext.totalSpend,
+        sessionDays: playerProfile.session_days || playerProfile.sessionDays || playerContext.sessionDays,
+        isSpender: playerProfile.is_spender !== undefined ? playerProfile.is_spender : (playerProfile.totalSpend > 0 || playerContext.isSpender),
+        
+        // Account status and security fields
+        accountStatus: playerProfile.account_status || playerContext.accountStatus,
+        lockReason: playerProfile.lock_reason || playerContext.lockReason,
+        verificationPending: playerProfile.verification_pending !== undefined ? playerProfile.verification_pending : playerContext.verificationPending,
+        
+        // Technical and device fields
+        recentCrashes: playerProfile.recent_crashes !== undefined ? playerProfile.recent_crashes : playerContext.recentCrashes,
+        crashFrequency: playerProfile.crash_frequency || playerContext.crashFrequency,
+        lastCrashAt: playerProfile.last_crash_at || playerContext.lastCrashAt,
+        deviceType: playerProfile.device_type || playerContext.deviceType,
+        appVersion: playerProfile.app_version || playerContext.appVersion,
+        osVersion: playerProfile.os_version || playerContext.osVersion,
+        connectionQuality: playerProfile.connection_quality || playerContext.connectionQuality,
+        
+        // Support and analytics fields
+        supportTier: playerProfile.support_tier || playerContext.supportTier,
+        churnRisk: playerProfile.churn_risk || playerContext.churnRisk,
+        sentimentHistory: playerProfile.sentiment_history || playerContext.sentimentHistory,
+        previousIssues: playerProfile.previous_issues !== undefined ? playerProfile.previous_issues : playerContext.previousIssues
+      };
+      console.log('👤 RAGChatHandler: Updated player context:', contextToUse);
+      console.log('🔍 RAGChatHandler: Available database fields for AI:', {
+        accountStatus: contextToUse.accountStatus,
+        lockReason: contextToUse.lockReason,
+        verificationPending: contextToUse.verificationPending,
+        supportTier: contextToUse.supportTier,
+        churnRisk: contextToUse.churnRisk,
+        sentimentHistory: contextToUse.sentimentHistory,
+        previousIssues: contextToUse.previousIssues,
+        deviceType: contextToUse.deviceType,
+        connectionQuality: contextToUse.connectionQuality
+      });
+      
+      // Update effective player context for local use (compensation hook, etc.)
+      setEffectivePlayerContext(contextToUse);
+      
+      // Update parent component's player context if callback provided
+      if (onPlayerContextUpdate) {
+        console.log('👤 RAGChatHandler: Updating parent player context');
+        onPlayerContextUpdate(contextToUse);
+      }
+    }
+    
+    // Generate AI response based on escalated analysis or automated resolution
     const { issueDetected, issue, compensation } = analysisData;
     
-    // More flexible check - proceed if we have at least issue detection
-    if (issueDetected || issue || compensation) {
+    // More flexible check - proceed if we have at least issue detection OR automated resolution
+    if (issueDetected || issue || compensation || automatedResolution) {
       console.log('🔧 Creating escalated response with available data');
-      // Create structured response components with fallbacks
-      const problemSummary = issue ? generateProblemSummary(issue, playerContext) : 
-        `I can see that you're a Level ${playerContext.gameLevel || 1}${(playerContext.vipLevel || 0) > 0 ? ` VIP ${playerContext.vipLevel}` : ''} player who was escalated from our automated support system. I've reviewed your case and understand the issue you're facing.`;
       
-      const solution = issue ? generateSolution(issue) : 
-        "I'll investigate this issue for you right away. Based on your escalation from automated support, this requires human review. Let me check your account and resolve this matter.";
+      // Use automated resolution as fallback when AI analysis is incomplete
+      let problemSummary, solution;
       
-      const compensationText = (compensation && compensation.tier !== 'NONE') ? 
-        generateCompensationText(compensation) : '';
-      const hasCompensation = !!(compensation && compensation.tier !== 'NONE' && compensationText);
+      if (automatedResolution && automatedResolution.success) {
+        console.log('🤖 Using automated resolution for response content');
+        
+        // Build player description with relevant context
+        let playerDescription = `Level ${contextToUse.gameLevel || 1}`;
+        if ((contextToUse.vipLevel || 0) > 0) {
+          playerDescription += ` VIP ${contextToUse.vipLevel}`;
+        }
+        
+        // Add account status context if relevant
+        let statusContext = '';
+        if (contextToUse.accountStatus === 'locked') {
+          statusContext = ` I can see your account currently has a security lock due to ${contextToUse.lockReason || 'security reasons'}.`;
+        } else if (contextToUse.verificationPending) {
+          statusContext = ` I notice you have verification pending on your account.`;
+        }
+        
+        problemSummary = `I can see you're a ${playerDescription} player.${statusContext} Our automated system has already processed your case and prepared a resolution for your ${automatedResolution.resolution?.category || 'support'} issue.`;
+        
+        // Use automated resolution actions as solution
+        const actions = automatedResolution.resolution?.actions || [];
+        solution = actions.length > 0 
+          ? `Here's what I've done to resolve your issue: ${actions.join(' ')}`
+          : `I've processed your ${automatedResolution.resolution?.category || 'support'} request and applied the appropriate resolution to your account.`;
+      } else if (issue) {
+        // Use AI analysis if available
+        problemSummary = generateProblemSummary(issue, contextToUse);
+        solution = generateSolution(issue);
+      } else {
+        // Generic fallback
+        let playerDescription = `Level ${contextToUse.gameLevel || 1}`;
+        if ((contextToUse.vipLevel || 0) > 0) {
+          playerDescription += ` VIP ${contextToUse.vipLevel}`;
+        }
+        
+        let statusContext = '';
+        if (contextToUse.accountStatus === 'locked') {
+          statusContext = ` I can see your account currently has a security lock due to ${contextToUse.lockReason || 'security reasons'}.`;
+        } else if (contextToUse.verificationPending) {
+          statusContext = ` I notice you have verification pending on your account.`;
+        }
+        
+        problemSummary = `I can see that you're a ${playerDescription} player who was escalated from our automated support system.${statusContext} I've reviewed your case and understand the issue you're facing.`;
+        solution = "I'll investigate this issue for you right away. Based on your escalation from automated support, this requires human review. Let me check your account and resolve this matter.";
+      }
+      
+      // Check for compensation from AI analysis or automated resolution
+      let compensationText = '';
+      let hasCompensation = false;
+      let compensationDetails = null;
+      
+      if (compensation && compensation.tier !== 'NONE') {
+        // Use AI-determined compensation
+        compensationText = generateCompensationText(compensation);
+        hasCompensation = !!compensationText;
+        compensationDetails = {
+          tier: compensation.tier,
+          gold: compensation.suggestedCompensation?.gold,
+          resources: compensation.suggestedCompensation?.resources,
+          reasoning: compensation.reasoning?.replace(/^I've|^I have/, 'Analysis has') || 'Compensation recommended based on issue severity and player impact',
+          requiresApproval: compensation.requiresHumanReview || false
+        };
+      } else if (automatedResolution && automatedResolution.resolution?.compensation) {
+        // Use automated resolution compensation as fallback
+        console.log('🤖 Using automated resolution compensation');
+        const autoComp = automatedResolution.resolution.compensation;
+        compensationText = `I've also added ${autoComp.gold ? `${autoComp.gold} gold` : 'appropriate compensation'} to your account as an apology for the inconvenience. ${autoComp.description || 'This compensation reflects the impact of the issue on your gameplay experience.'}`;
+        hasCompensation = true;
+        compensationDetails = {
+          tier: 'P4', // Default tier for automated compensation
+          gold: autoComp.gold,
+          resources: autoComp.resources,
+          reasoning: autoComp.description || 'Automated compensation for account issue',
+          requiresApproval: false
+        };
+      }
       
       // Set three-part data
       const threePartResponseData = {
@@ -534,30 +935,50 @@ export default function RAGChatHandler({
       };
 
       const analysisDataForPopup = {
-        playerName: playerContext.playerName || 'Unknown Player',
-        issueType: issue?.issueType || 'Escalated Support',
+        playerName: contextToUse.playerName || 'Unknown Player',
+        issueType: issue?.issueType || automatedResolution?.resolution?.category || 'Escalated Support',
         description: generateThirdPersonDescription(issue),
-        severity: compensation?.tier || 'P5',
+        severity: compensationDetails?.tier || 'P5',
         confidenceScore: issue?.confidenceScore || 0.8
       };
       
-      const compensationDetails = hasCompensation ? {
-        tier: compensation.tier,
-        gold: compensation.suggestedCompensation?.gold,
-        resources: compensation.suggestedCompensation?.resources,
-        reasoning: compensation.reasoning?.replace(/^I've|^I have/, 'Analysis has') || 'Compensation recommended based on issue severity and player impact',
-        requiresApproval: compensation.requiresHumanReview || false
-      } : null;
-      
       // Store data and show issue summary popup
+      console.log('🔧 RAGChatHandler: Setting three-part data from escalated analysis');
+      console.log('🔧 RAGChatHandler: threePartResponseData:', threePartResponseData);
       setThreePartData(threePartResponseData);
+      console.log('🔧 RAGChatHandler: Three-part data set successfully');
+      
+      console.log('🔧 RAGChatHandler: Setting issue analysis data');
       setIssueAnalysisData({ analysisData: analysisDataForPopup, compensationDetails });
       
+      // IMPORTANT: Register compensation data with the compensation hook (like regular chat flow)
+      if (hasCompensation && compensation) {
+        console.log('🔧 RAGChatHandler: Registering compensation data with hook');
+        const compensationHookData = {
+          issueDetected: true,
+          issue: {
+            issueType: issue?.issueType,
+            description: issue?.description,
+            playerImpact: issue?.playerImpact,
+            confidenceScore: issue?.confidenceScore
+          },
+          sentiment: analysisData.sentiment,
+          recommendation: compensation,
+          aiSummary: `Escalated analysis detected: ${issue?.description || 'Issue requiring attention'}. Compensation tier: ${compensation.tier}.`
+        };
+        compensationHook.setRawCompensationData(compensationHookData);
+      }
+      
       // Show issue summary popup first
+      console.log('🔧 RAGChatHandler: Setting workflow stage to analysis_pending');
       setWorkflowStage('analysis_pending');
+      console.log('🔧 RAGChatHandler: Showing issue summary popup');
       setShowIssueSummaryPopup(true);
       
-      console.log('✅ Escalated analysis processed - showing issue summary popup');
+      console.log('✅ RAGChatHandler: Escalated analysis processed - showing issue summary popup');
+      console.log('✅ RAGChatHandler: Current state - showThreePartResponse:', showThreePartResponse);
+      console.log('✅ RAGChatHandler: Current state - threePartData exists:', !!threePartData);
+      console.log('✅ RAGChatHandler: Current state - workflowStage:', workflowStage);
     } else {
       console.log('⚠️ No escalated analysis data found, creating basic escalation response');
       
@@ -948,6 +1369,23 @@ export default function RAGChatHandler({
     }
   }, [shouldScrollToBottom, messages]);
 
+  // Show full-screen loading when processing escalated analysis
+  if (processingEscalatedAnalysis) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="text-xl font-medium text-gray-700 mb-2">
+            Processing AI Analysis...
+          </div>
+          <div className="text-sm text-gray-500">
+            Analyzing your case and preparing response
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Messages area - 50% of height */}
@@ -981,15 +1419,23 @@ export default function RAGChatHandler({
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center bg-gray-50 text-gray-500">
-            <div className="text-center">
-              <div className="text-2xl mb-2">📝</div>
-              <div className="font-medium">Three-Part Response</div>
-              <div className="text-sm">Responses will appear here after analysis</div>
-              <div className="text-xs mt-2 font-mono bg-white p-2 rounded border">
-                Debug: showThreePartResponse={String(showThreePartResponse)}, 
-                hasThreePartData={String(!!threePartData)}, 
-                workflowStage={workflowStage}
+          <div className="flex-1 flex items-center justify-center" style={{
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            <div className="absolute inset-0 opacity-10">
+              <div className="absolute top-4 left-4 w-16 h-16 bg-white rounded-full animate-pulse"></div>
+              <div className="absolute bottom-8 right-8 w-12 h-12 bg-white rounded-full animate-pulse" style={{animationDelay: '1s'}}></div>
+              <div className="absolute top-1/3 right-1/4 w-8 h-8 bg-white rounded-full animate-pulse" style={{animationDelay: '2s'}}></div>
+            </div>
+            <div className="text-center text-white z-10">
+              <div className="text-xl font-light mb-2">Session Complete</div>
+              <div className="text-sm opacity-80">Your support experience has been successfully processed</div>
+              <div className="mt-6 flex justify-center space-x-2">
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
               </div>
             </div>
           </div>

@@ -38,6 +38,25 @@ interface PlayerProfile {
   session_days: number;
   kingdom_id?: number;
   alliance_name?: string;
+  
+  // Database status fields
+  account_status?: 'active' | 'locked' | 'suspended' | 'banned' | 'pending_verification';
+  lock_reason?: 'security' | 'payment_dispute' | 'tos_violation' | 'automated_security';
+  verification_pending?: boolean;
+  recent_crashes?: number;
+  crash_frequency?: 'none' | 'low' | 'medium' | 'high' | 'critical';
+  last_crash_at?: string;
+  device_type?: 'ios' | 'android' | 'web';
+  app_version?: string;
+  os_version?: string;
+  connection_quality?: 'poor' | 'fair' | 'good' | 'excellent';
+  support_tier?: 'standard' | 'priority' | 'vip' | 'premium';
+  churn_risk?: 'low' | 'medium' | 'high';
+  sentiment_history?: 'positive' | 'neutral' | 'negative' | 'volatile';
+  previous_issues?: number;
+  last_login?: string;
+  account_created?: string;
+  suspension_expires?: string | null;
 }
 
 /**
@@ -50,27 +69,48 @@ export class AutomatedResolutionEngine {
    */
   static async resolveIssue(
     formData: IntakeFormData, 
-    playerProfile: PlayerProfile
+    playerProfile: PlayerProfile,
+    aiAnalysis?: any
   ): Promise<AutomatedResolution> {
     
     console.log('🔧 AutomatedResolution: Starting for', playerProfile.player_name, 'category:', formData.problemCategory || 'unspecified');
+    if (aiAnalysis) {
+      console.log('🧠 Using AI analysis results:', { issueDetected: aiAnalysis.issueDetected, issueType: aiAnalysis.issue?.issueType });
+    }
     
     const ticketId = this.generateTicketId();
     
     try {
-      // Check for LannisterGold account lock special case
-      if (playerProfile.player_id === 'lannister-gold' && (playerProfile as any).account_status === 'locked') {
-        console.log('🔐 AutomatedResolution: LannisterGold account lock detected, using email verification');
+      // Use AI analysis if available, otherwise fall back to hard-coded rules
+      let resolvedCategory = formData.problemCategory;
+      
+      if (aiAnalysis?.issueDetected && aiAnalysis.issue?.issueType) {
+        resolvedCategory = aiAnalysis.issue.issueType;
+        console.log('🧠 Using AI-determined category:', resolvedCategory);
+      }
+      
+      // Check for any account lock based on database status
+      if (playerProfile.account_status === 'locked') {
+        console.log('🔐 AutomatedResolution: Account lock detected in database for', playerProfile.player_name, 'reason:', playerProfile.lock_reason);
         return await this.handleAccountLockResolution(formData, playerProfile, ticketId);
       }
       
-      // Check for account access issues
-      if (formData.problemCategory === 'account_access' && this.isAccountLockIssue(formData.problemDescription)) {
-        console.log('🔐 AutomatedResolution: Account lock issue detected');
+      // Legacy check for LannisterGold specific case (if database status not available)
+      if (playerProfile.player_id === 'lannister-gold' && 
+          (resolvedCategory === 'account' || this.isAccountLockIssue(formData.problemDescription))) {
+        console.log('🔐 AutomatedResolution: LannisterGold account lock detected via legacy check, using email verification');
         return await this.handleAccountLockResolution(formData, playerProfile, ticketId);
       }
       
-      switch (formData.problemCategory) {
+      // Check for account access issues based on AI analysis or category
+      if (resolvedCategory === 'account' && this.isAccountLockIssue(formData.problemDescription)) {
+        console.log('🔐 AutomatedResolution: Account lock issue detected via AI/category analysis');
+        return await this.handleAccountLockResolution(formData, playerProfile, ticketId);
+      }
+      
+      // Use AI-resolved category for resolution
+      switch (resolvedCategory) {
+        case 'account':
         case 'account_access':
           return await this.resolveAccountAccess(formData, playerProfile, ticketId);
         
@@ -83,6 +123,20 @@ export class AutomatedResolutionEngine {
         case 'technical':
           return await this.resolveTechnicalIssues(formData, playerProfile, ticketId);
         
+        case 'gameplay':
+          // Gameplay issues typically require human review
+          return {
+            success: false,
+            ticketId,
+            resolution: {
+              category: 'escalation',
+              actions: [],
+              timeline: '',
+              followUpInstructions: ''
+            },
+            escalationReason: `Gameplay issue requires specialized human review`
+          };
+        
         default:
           return {
             success: false,
@@ -93,7 +147,7 @@ export class AutomatedResolutionEngine {
               timeline: '',
               followUpInstructions: ''
             },
-            escalationReason: `Category "${formData.problemCategory}" requires human review`
+            escalationReason: `Category "${resolvedCategory}" requires human review`
           };
       }
     } catch (error) {

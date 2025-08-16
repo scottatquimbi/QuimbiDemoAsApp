@@ -119,7 +119,7 @@ export async function POST(req: Request) {
     debugLog('Ollama Compensation Analysis', analysisResult);
     
     // Add compensation information to system prompt if an issue was detected
-    if (analysisResult.issueDetected) {
+    if (analysisResult.issueDetected && 'compensation' in analysisResult) {
       const hasCompensation = (analysisResult.compensation?.suggestedCompensation?.gold || 0) > 0 || 
                              Object.keys(analysisResult.compensation?.suggestedCompensation?.resources || {}).length > 0;
       
